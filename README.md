@@ -6,6 +6,8 @@ Is a semicolon based language (I don't want to suffering while im make this lang
 and able to change_**]
 [Fun fact:
 **_I'll forgot that language for a while. My environment piss me off (im using mobile). i didn't know the project will get that complicate. so no Haste for a yeaaaaaars :('_**]
+[UPDATE: **_I finally brough a computer so i'll keep working on this language and i might use another language like c++ or zig_**]
+[ABOUT THE FORK: **_I lost the access to my main acount so i did fork the repo in order to continue working on haste_**]
 
 ## Features:
 - How to try it? <br/>
