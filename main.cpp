@@ -4,7 +4,9 @@
 #include <ostream>
 
 int main (int argc, char *argv[]) {
-	std::string code = "";
+	Scanner::setup_keywords();
+
+	std::string code = "() + *!var func rrrr";
 	Scanner scanner(code);
 	TokenList tokens = scanner.scan();
 	for (auto& token : tokens) {

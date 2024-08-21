@@ -7,7 +7,7 @@
 
 enum class TokenType {
 	// tokens
-	OpenParen, // '('
+	OpenParen = 0, // '('
 	CloseParen, // ')'
 	Plus, // '+'
 	Minus, // '-'
@@ -25,8 +25,8 @@ enum class TokenType {
 	StringLit,
 	Identifier,
 	// Keywords
-	Var,
 	NotVar,
+	Var,
 	Func,
 	If,
 	Else,
@@ -57,9 +57,9 @@ public:
 		std::stringstream stream;
 		stream << "Token(";
 		stream << std::to_string((int) type);
-		stream << ", ";
+		stream << ", \"";
 		stream << value;
-		stream << ", ";
+		stream << "\", ";
 		stream << std::to_string(line);
 		stream << ", ";
 		stream << std::to_string(column);
