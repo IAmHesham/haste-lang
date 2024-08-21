@@ -6,7 +6,7 @@
 int main (int argc, char *argv[]) {
 	Scanner::setup_keywords();
 
-	std::string code = "() + *!var func rrrr";
+	std::string code = ". ; : & && | || ~ ~= < <= <<  > >= >> $hhhh";
 	Scanner scanner(code);
 	TokenList tokens = scanner.scan();
 	for (auto& token : tokens) {

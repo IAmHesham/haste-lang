@@ -8,12 +8,16 @@
 #include <vector>
 
 Scanner::Scanner(std::string& content): m_content(content) {}
+
 void Scanner::setup_keywords() {
 	keywords["var"] = TokenType::Var;
 	keywords["func"] = TokenType::Func;
 	keywords["if"] = TokenType::If;
 	keywords["else"] = TokenType::Else;
 	keywords["is"] = TokenType::Is;
+	keywords["not"] = TokenType::Not;
+	keywords["or"] = TokenType::Or;
+	keywords["and"] = TokenType::And;
 }
 
 TokenList Scanner::scan() {
@@ -23,11 +27,24 @@ TokenList Scanner::scan() {
 		switch (c) {
 			case '(': add_token(TokenType::OpenParen); break;
 			case ')': add_token(TokenType::CloseParen); break;
+			case '{': add_token(TokenType::OpenCurlyBrase); break;
+			case '}': add_token(TokenType::CloseCurlyBrase); break;
+			case '[': add_token(TokenType::OpenSquareBracket); break;
+			case ']': add_token(TokenType::CloseSquareBracket); break;
 			case '+': add_token(TokenType::Plus); break;
 			case '-': add_token(TokenType::Minus); break;
 			case '*': add_token(TokenType::Star); break;
 			case '/': add_token(TokenType::FSlash); break;
 			case '\\': add_token(TokenType::BSlash); break;
+			case '.': add_token(TokenType::Dot); break;
+			case ';': add_token(TokenType::SemiColon); break;
+			case ':': add_token(TokenType::Colon); break;
+			case '=': add_token(match('=') ? TokenType::EqEq : TokenType::Eq); break;
+			case '&': add_token(match('&') ? TokenType::And : TokenType::BitwiseAnd); break;
+			case '|': add_token(match('|') ? TokenType::Or : TokenType::BitwiseOr); break;
+			case '~': add_token(match('=') ? TokenType::Almost : TokenType::BitwiseNot); break;
+			case '<': add_token(match('=') ? TokenType::LessThanOrEq : match('<') ? TokenType::BitWiseLeftShift : TokenType::LessThan); break;
+			case '>': add_token(match('=') ? TokenType::GreaterThanOrEq : match('>') ? TokenType::BitWiseRightShift : TokenType::GreaterThan); break;
 			case '!':
 				if (match('=')) {
 					add_token(TokenType::BangEq);
@@ -41,7 +58,6 @@ TokenList Scanner::scan() {
 					}
 				}
 				break;
-			case '=': add_token(match('=') ? TokenType::EqEq : TokenType::Eq); break;
 
 			case '\n':
 				m_line++;
@@ -53,9 +69,9 @@ TokenList Scanner::scan() {
 				break;
 
 			default:
-				if (isalpha(peek())) {
+				if (is_alpha()) {
 					scan_ident();
-				} else if (isdigit(peek())) {
+				} else if (is_digit()) {
 					scan_numbers();
 				} else if (peek() == '"') {
 					scan_string();
@@ -67,7 +83,7 @@ TokenList Scanner::scan() {
 }
 
 void Scanner::scan_ident() {
-	while (isalnum(peek())) advance();
+	while (is_alphanum()) advance();
 
 	std::string buffer = m_content.substr(m_start, m_current - m_start);
 	if (keywords.contains(buffer)) {
@@ -79,12 +95,12 @@ void Scanner::scan_ident() {
 
 void Scanner::scan_numbers() {
 	TokenType type = TokenType::IntLit;
-	while (isdigit(peek())) advance();
+	while (is_digit()) advance();
 
 	if (peek() == '.') {
 		type = TokenType::FloatLit;
 		advance();
-		while (isdigit(peek()) || peek() == 'f') advance();
+		while (is_digit()) advance();
 	}
 	
 	std::string buffer = m_content.substr(m_start, m_current - m_start);
@@ -131,7 +147,7 @@ bool Scanner::is_digit() {
 
 bool Scanner::is_alphanum() {
 	char c  = peek();
-	return is_alpha(c) && is_digit(c);
+	return is_alpha(c) || is_digit(c);
 }
 
 bool Scanner::is_alpha(char c) {
