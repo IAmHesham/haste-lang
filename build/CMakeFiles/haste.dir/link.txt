@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/haste.dir/main.cpp.o CMakeFiles/haste.dir/src/Scanner.cpp.o -o haste 
