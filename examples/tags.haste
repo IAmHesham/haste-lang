@@ -1,0 +1,32 @@
+
+tag DistanceUnit for float {
+	mm,
+	cm,
+	dm,
+	m,
+	dam,
+	hm,
+	km
+}
+
+func jump(x: DistanceUnit::m) {
+	@println("Jumped in meter");
+}
+
+func jump(x: DistanceUnit::cm) {
+	@println("Jumped in c meter");
+}
+
+func main() {
+	!var v = 20.f as DistanceUnit::m;
+	!var v2 = 30.f as DistanceUnit::cm;
+
+	jump(v); # Jumped in meter
+	jump(v2); # Jumped in c meter
+	jump(80.f as DistanceUnit::hm); # Error not implemented
+
+	\if v2 is DistanceUnit::mm {
+		@println("mm"); # nothing will happen
+	}
+}
+

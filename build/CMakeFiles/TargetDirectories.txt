@@ -1,0 +1,4 @@
+/home/hesham/projects/haste-lang/build/CMakeFiles/haste.dir
+/home/hesham/projects/haste-lang/build/CMakeFiles/run.dir
+/home/hesham/projects/haste-lang/build/CMakeFiles/edit_cache.dir
+/home/hesham/projects/haste-lang/build/CMakeFiles/rebuild_cache.dir

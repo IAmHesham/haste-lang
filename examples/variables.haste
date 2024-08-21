@@ -1,0 +1,18 @@
+# Variables in haste 
+
+func main() {
+	# using `var` keyword you can define a mutable variable that we can change it's value.
+	var age: uint = 17;
+	age++;
+
+	# Never head of "not a variable"? well by adding `!` before `var` we can make an immutable variable that connot change!
+	!var name: string = "Hesham";
+	name = "Jack"; # Bad
+
+	# doing dangerous stuff is easy in haste! use `ptr` keyword instead of `var` to make a pointer!
+	ptr p = &age;
+	*p = 19;
+
+	p = nullptr;
+	*p = 0; # Well.. being hasty is bad ig.
+}

@@ -1,0 +1,10 @@
+# hello world example in haste
+
+
+# This main function is our entry point
+# Here is your program starts
+func main() {
+	# Any function that starts with '@' symbol is accualy a macro call
+	# To define a string you need to wrap your text with explicitly double quotes eg. "I'm a text!!!"
+	@println("Hello World");
+}
