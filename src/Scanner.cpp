@@ -1,5 +1,5 @@
 #include <cstddef>
-#include <macros.hpp>
+#include "macros.hpp"
 #include "tokens.hpp"
 #include <Scanner.hpp>
 #include <cctype>
@@ -7,17 +7,42 @@
 #include <string>
 #include <vector>
 
-Scanner::Scanner(std::string& content): m_content(content) {}
+Scanner::Scanner(): m_content("") {
+	setup_keywords();
+}
+Scanner::Scanner(std::string content): m_content(content) {
+	setup_keywords();
+}
+
+void Scanner::reconstruct(std::string content) {
+	m_content = content;
+	m_current = 0;
+	m_start = 0;
+	m_line = 1;
+	m_column = 1;
+	m_tokens.clear();
+}
 
 void Scanner::setup_keywords() {
-	keywords["var"] = TokenType::Var;
-	keywords["func"] = TokenType::Func;
-	keywords["if"] = TokenType::If;
-	keywords["else"] = TokenType::Else;
-	keywords["is"] = TokenType::Is;
-	keywords["not"] = TokenType::Not;
-	keywords["or"] = TokenType::Or;
-	keywords["and"] = TokenType::And;
+#define AK(keyword, tokenname) keywords[keyword] = TokenType::tokenname;
+	AK("var", Var)
+    AK("!var", NotVar)
+    AK("func", Func)
+    AK("return", Return)
+    AK("!func", InlineFunc)
+    AK("if", If)
+    AK("!if", Unless)
+    AK("else", Else)
+    AK("is", Is)
+    AK("not", Not)
+    AK("or", Or)
+    AK("and", And)
+    AK("class", Class)
+    AK("!class", FinalClass)
+	AK("for", For)
+	AK("loop", Loop)
+	AK("try", Try)
+	AK("catch", Catch)
 }
 
 TokenList Scanner::scan() {
@@ -38,6 +63,7 @@ TokenList Scanner::scan() {
 			case '\\': add_token(TokenType::BSlash); break;
 			case '.': add_token(TokenType::Dot); break;
 			case ';': add_token(TokenType::SemiColon); break;
+			case ',': add_token(TokenType::Coma); break;
 			case ':': add_token(TokenType::Colon); break;
 			case '=': add_token(match('=') ? TokenType::EqEq : TokenType::Eq); break;
 			case '&': add_token(match('&') ? TokenType::And : TokenType::BitwiseAnd); break;
@@ -50,9 +76,10 @@ TokenList Scanner::scan() {
 					add_token(TokenType::BangEq);
 				} else {
 					Scanner::Ident ident = get_next_ident();
-					if (ident.value == "var") {
+					std::string id = "!" + ident.value;
+					if (keywords.contains(id)) {
 						ident.skip();
-						add_token(TokenType::NotVar);
+						add_token(keywords[id]);
 					} else {
 						add_token(TokenType::Not);
 					}
@@ -69,11 +96,12 @@ TokenList Scanner::scan() {
 				break;
 
 			default:
-				if (is_alpha()) {
+				if (is_alpha(c)) {
 					scan_ident();
-				} else if (is_digit()) {
+				} else if (is_digit(c)) {
 					scan_numbers();
-				} else if (peek() == '"') {
+				} else if (c == '\'') {
+				} else if (c == '"') {
 					scan_string();
 				}
 				break;
@@ -83,6 +111,11 @@ TokenList Scanner::scan() {
 }
 
 void Scanner::scan_ident() {
+	if (peek(-1) == '$' && is('"')) {
+		advance();
+		scan_special();
+		return;
+	}
 	while (is_alphanum()) advance();
 
 	std::string buffer = m_content.substr(m_start, m_current - m_start);
@@ -93,6 +126,14 @@ void Scanner::scan_ident() {
 	add_token(TokenType::Identifier, buffer);
 }
 
+void Scanner::scan_special() {
+	while (!is('"')) advance();
+	advance();
+
+	std::string buffer = m_content.substr(m_start + 2, m_current - m_start - 3);
+	add_token(TokenType::SpicialIdentifier, buffer);
+}
+
 void Scanner::scan_numbers() {
 	TokenType type = TokenType::IntLit;
 	while (is_digit()) advance();
@@ -100,7 +141,7 @@ void Scanner::scan_numbers() {
 	if (peek() == '.') {
 		type = TokenType::FloatLit;
 		advance();
-		while (is_digit()) advance();
+		while (is_digit() || is('f')) advance();
 	}
 	
 	std::string buffer = m_content.substr(m_start, m_current - m_start);
@@ -129,9 +170,18 @@ bool Scanner::ident_match(std::string ident) {
 	UNIMPLEMENTED;
 }
 
+bool Scanner::is(char c) {
+	return peek() == c;
+}
+
 char Scanner::peek() {
 	if (at_end()) return '\0';
 	return m_content[m_current];
+}
+
+char Scanner::peek(int i) {
+	if (at_end(m_current + i)) return '\0';
+	return m_content[m_current + i];
 }
 
 bool Scanner::is_alpha() {
@@ -180,6 +230,11 @@ bool Scanner::at_end(std::size_t i) {
 
 char Scanner::advance() {
 	return m_content[m_current++];
+}
+
+char Scanner::advance(std::size_t i) {
+	m_current += i;
+	return m_content[m_current - 1];
 }
 
 Scanner::Ident Scanner::get_next_ident() {

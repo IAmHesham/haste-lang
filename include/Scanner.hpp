@@ -9,8 +9,11 @@
 
 class Scanner {
 	public:
-		Scanner(std::string &content);
+		Scanner();
+		Scanner(std::string content);
+
 		TokenList scan();
+		void reconstruct(std::string content);
 
 		static void setup_keywords();
 	private:
@@ -34,7 +37,7 @@ class Scanner {
 		};
 
 		inline static std::unordered_map<std::string, TokenType> keywords = std::unordered_map<std::string, TokenType>();
-		std::string &m_content;
+		std::string m_content;
 		std::size_t m_current = 0;
 		std::size_t m_start = 0;
 		std::size_t m_line = 1;
@@ -42,6 +45,7 @@ class Scanner {
 		std::vector<Token> m_tokens;
 
 		void scan_ident();
+		void scan_special();
 		void scan_numbers();
 		void scan_string();
 
@@ -49,6 +53,7 @@ class Scanner {
 		void add_token(TokenType type, std::string value);
 
 		bool ident_match(std::string ident);
+		bool is(char c);
 		bool is_alpha();
 		bool is_digit();
 		bool is_alphanum();
@@ -61,7 +66,9 @@ class Scanner {
 		bool at_end();
 		bool at_end(std::size_t i);
 		char peek();
+		char peek(int c);
 		char advance();
+		char advance(std::size_t i);
 
 		Ident get_next_ident();
 };

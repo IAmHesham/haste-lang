@@ -19,6 +19,7 @@ enum class TokenType {
 	Minus, // '-'
 	Star, // '*'
 	FSlash, // '/'
+
 	BSlash, // '\'
 	
 	Almost, // '~='
@@ -29,6 +30,7 @@ enum class TokenType {
 	GreaterThan, // '>'
 	LessThanOrEq, // '<='
 	GreaterThanOrEq, // '>='
+
 	Not, // '!' 'not'
 	And, // '&&' 'and'
 	Or, // '||' 'or'
@@ -41,7 +43,9 @@ enum class TokenType {
 	
 	Dot, // '.'
 	SemiColon, // ';'
+	Coma, // ','
 	Colon, // ':'
+	
 	// Literals
 	IntLit,
 	FloatLit,
@@ -49,13 +53,29 @@ enum class TokenType {
 	StringLit,
 	CharLit,
 	Identifier,
+	SpicialIdentifier,
+	
 	// Keywords
-	NotVar,
+	NotVar, // !var
 	Var,
 	Func,
+	InlineFunc, // !func
+	Return,
+
+	//// Control flows
 	If,
+	Unless, // !if
 	Else,
 	Is,
+	For,
+	Loop,
+
+	//// Class related
+	Class,
+	FinalClass, // !class
+
+	Try,
+	Catch,
 };
 
 class Token {
@@ -78,6 +98,30 @@ class Token {
 		Token(TokenType type, std::string value, std::size_t line, std::size_t column, std::size_t length):
 			type(type), value(value), line(line), column(column), length(length) {}
 
+		bool operator==(const TokenType& other) {
+			return type == other;
+		}
+
+		bool operator==(std::string& other) {
+			return value == other;
+		}
+
+		bool operator==(Token& other) {
+			return type == other.type && value == other.value;
+		}
+
+		bool operator==(const TokenType& other) const {
+			return type == other;
+
+		}
+		bool operator==(std::string& other) const {
+			return value == other;
+		}
+
+		bool operator==(Token& other) const {
+			return type == other.type && value == other.value;
+		}
+
 		std::string to_string() {
 			std::stringstream stream;
 			stream << "Token(";
@@ -95,54 +139,69 @@ class Token {
 		}
 		static std::string token_tostring(TokenType token) {
 			switch (token) {
-				case TokenType::OpenParen: return "OpenParen";
-				case TokenType::CloseParen: return "CloseParen";
-				case TokenType::OpenCurlyBrase: return "OpenCurlyBrase";
-				case TokenType::CloseCurlyBrase: return "CloseCurlyBrase";
-				case TokenType::OpenSquareBracket: return "OpenSquareBracket";
-				case TokenType::CloseSquareBracket: return "CloseSquareBracket";
+#define TM(token) case TokenType::token: return #token;
+				TM(OpenParen)
+				TM(CloseParen)
+				TM(OpenCurlyBrase)
+				TM(CloseCurlyBrase)
+				TM(OpenSquareBracket)
+				TM(CloseSquareBracket)
 
-				case TokenType::Plus: return "Plus";
-				case TokenType::Minus: return "Minus";
-				case TokenType::Star: return "Star";
-				case TokenType::FSlash: return "FSlash";
-				case TokenType::BSlash: return "BSlash";
+				TM(Plus)
+				TM(Minus)
+				TM(Star)
+				TM(FSlash)
+				TM(BSlash)
 
-				case TokenType::Almost: return "Almost";
-				case TokenType::Eq: return "Eq";
-				case TokenType::EqEq: return "EqEq";
-				case TokenType::BangEq: return "BangEq";
-				case TokenType::LessThan: return "LessThan";
-				case TokenType::GreaterThan: return "GreaterThan";
-				case TokenType::LessThanOrEq: return "LessThanOrEq";
-				case TokenType::GreaterThanOrEq: return "GreaterThanOrEq";
-				case TokenType::Not: return "Not";
-				case TokenType::And: return "And";
-				case TokenType::Or: return "Or";
+				TM(Almost)
+				TM(Eq)
+				TM(EqEq)
+				TM(BangEq)
+				TM(LessThan)
+				TM(GreaterThan)
+				TM(LessThanOrEq)
+				TM(GreaterThanOrEq)
+				TM(Not)
+				TM(And)
+				TM(Or)
 
-				case TokenType::BitwiseAnd: return "BitwiseAnd";
-				case TokenType::BitwiseOr: return "BitwiseOr";
-				case TokenType::BitwiseNot: return "BitwiseNot";
-				case TokenType::BitWiseLeftShift: return "BitWiseLeftShift";
-				case TokenType::BitWiseRightShift: return "BitWiseRightShift";
+				TM(BitwiseAnd)
+				TM(BitwiseOr)
+				TM(BitwiseNot)
+				TM(BitWiseLeftShift)
+				TM(BitWiseRightShift)
 
-				case TokenType::Dot: return "Dot";
-				case TokenType::SemiColon: return "SemiColon";
-				case TokenType::Colon: return "Colon";
+				TM(Dot)
+				TM(SemiColon)
+				TM(Colon)
 
-				case TokenType::IntLit: return "IntLit";
-				case TokenType::FloatLit: return "FloatLit";
-				case TokenType::ComplexLit: return "ComplexLit";
-				case TokenType::StringLit: return "StringLit";
-				case TokenType::CharLit: return "CharLit";
-				case TokenType::Identifier: return "Identifier";
+				TM(IntLit)
+				TM(FloatLit)
+				TM(ComplexLit)
+				TM(StringLit)
+				TM(CharLit)
+				TM(Identifier)
+				TM(SpicialIdentifier)
 
-				case TokenType::NotVar: return "NotVar";
-				case TokenType::Var: return "Var";
-				case TokenType::Func: return "Func";
-				case TokenType::If: return "If";
-				case TokenType::Else: return "Else";
-				case TokenType::Is: return "Is";
+				TM(NotVar)
+				TM(Var)
+
+				TM(Func)
+				TM(Return)
+				TM(InlineFunc)
+
+				TM(If)
+				TM(Unless)
+				TM(Else)
+				TM(Is)
+				TM(For)
+
+				TM(Class)
+				TM(FinalClass)
+
+				TM(Try)
+				TM(Catch)
+				
 
 				default: return "Unknown";
 			}
