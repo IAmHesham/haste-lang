@@ -18,6 +18,7 @@ enum class TokenType {
 	Plus, // '+'
 	Minus, // '-'
 	Star, // '*'
+	DoubleStar, // '**'
 	FSlash, // '/'
 
 	BSlash, // '\'
@@ -58,6 +59,7 @@ enum class TokenType {
 	// Keywords
 	NotVar, // !var
 	Var,
+	Ptr,
 	Func,
 	InlineFunc, // !func
 	Return,
@@ -150,6 +152,7 @@ class Token {
 				TM(Plus)
 				TM(Minus)
 				TM(Star)
+				TM(DoubleStar)
 				TM(FSlash)
 				TM(BSlash)
 
@@ -185,6 +188,7 @@ class Token {
 
 				TM(NotVar)
 				TM(Var)
+				TM(Ptr)
 
 				TM(Func)
 				TM(Return)

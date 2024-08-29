@@ -24,25 +24,26 @@ void Scanner::reconstruct(std::string content) {
 }
 
 void Scanner::setup_keywords() {
-#define AK(keyword, tokenname) keywords[keyword] = TokenType::tokenname;
-	AK("var", Var)
-    AK("!var", NotVar)
-    AK("func", Func)
-    AK("return", Return)
-    AK("!func", InlineFunc)
-    AK("if", If)
-    AK("!if", Unless)
-    AK("else", Else)
-    AK("is", Is)
-    AK("not", Not)
-    AK("or", Or)
-    AK("and", And)
-    AK("class", Class)
-    AK("!class", FinalClass)
-	AK("for", For)
-	AK("loop", Loop)
-	AK("try", Try)
-	AK("catch", Catch)
+#define AK(keyword, tokenname) keywords[keyword] = TokenType::tokenname
+	AK("var", Var);
+	AK("ptr", Ptr);
+    AK("!var", NotVar);
+    AK("func", Func);
+    AK("return", Return);
+    AK("!func", InlineFunc);
+    AK("if", If);
+    AK("!if", Unless);
+    AK("else", Else);
+    AK("is", Is);
+    AK("not", Not);
+    AK("or", Or);
+    AK("and", And);
+    AK("class", Class);
+    AK("!class", FinalClass);
+	AK("for", For);
+	AK("loop", Loop);
+	AK("try", Try);
+	AK("catch", Catch);
 }
 
 TokenList Scanner::scan() {
@@ -58,7 +59,7 @@ TokenList Scanner::scan() {
 			case ']': add_token(TokenType::CloseSquareBracket); break;
 			case '+': add_token(TokenType::Plus); break;
 			case '-': add_token(TokenType::Minus); break;
-			case '*': add_token(TokenType::Star); break;
+			case '*': add_token(match('*') ? TokenType::DoubleStar : TokenType::Star); break;
 			case '/': add_token(TokenType::FSlash); break;
 			case '\\': add_token(TokenType::BSlash); break;
 			case '.': add_token(TokenType::Dot); break;
