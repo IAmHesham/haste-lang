@@ -27,10 +27,7 @@ static const char *decode_string(const char *start, size_t len)
 		}
 	}
 	chars[j] = '\0';
-
-	const char *result = intern_cstr(chars);
-	xdelete(len + 1, chars);
-	return result;
+	return chars;
 }
 
 static void populate_token_value(struct token_stream *self, struct token *tok)
@@ -71,7 +68,7 @@ static void populate_token_value(struct token_stream *self, struct token *tok)
 				break;
 			}
 		}
-		tok->ident = intern_str(source + tok->start, tok->len);
+		tok->ident = source + tok->start;
 		break;
 	case TK_STR: {
 		tok->str = decode_string(source + tok->start + 1, tok->len - 2);

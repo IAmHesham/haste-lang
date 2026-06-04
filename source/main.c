@@ -124,12 +124,11 @@ int main(int argc, char *argv[argc])
 	struct Arena arena = ArenaDefault();
 	struct Allocator arena_allocator = arena_get_allocator(&arena);
 
-	init_intern_table(c_allocator, arena_allocator);
-	setup_builtins(c_allocator);
+	struct intern_pool intern_table = init_intern_pool(c_allocator, arena_allocator);
+	setup_builtins(&intern_table);
 
 	// Sub-arena for analysis allocations (struct types, objects, strings)
 	struct Arena analysis_arena = Arena(c_allocator);
-	struct Allocator analysis_alloc = arena_get_allocator(&analysis_arena);
 
 	struct timer_list timers = {
 		.allocator = get_default_allocator(),
@@ -149,7 +148,7 @@ int main(int argc, char *argv[argc])
 	}
 
 	timer_start(&timers, "parser");
-	err = parse(arena_allocator, src);
+	err = parse(&intern_table, src);
 	timer_stop(&timers, allocated);
 
 	if (err) { exit_code = 1; goto cleanup; }
@@ -168,7 +167,7 @@ int main(int argc, char *argv[argc])
 	}
 
 	timer_start(&timers, "analysis");
-	err = analyze(analysis_alloc, arena_allocator,  src);
+	err = analyze(&intern_table, src);
 	timer_stop(&timers, allocated);
 	if (err) { exit_code = 1; goto cleanup; }
 
@@ -190,12 +189,12 @@ int main(int argc, char *argv[argc])
 		} else {
 			llvm_path = g_options.output_path;
 			if (!llvm_path) {
-				cwk_path_change_extension(g_options.source_path, ".ll", llvm_path_buf, sizeof(llvm_path_buf));
+				cwk_path_change_extension(g_options.source_path, ".c", llvm_path_buf, sizeof(llvm_path_buf));
 				llvm_path = llvm_path_buf;
 			}
 		}
 		timer_start(&timers, "codegen");
-		err = codegen(c_allocator, src,  llvm_path, llvm_to_stderr);
+		err = codegen(c_allocator, src, llvm_path, llvm_to_stderr);
 		timer_stop(&timers, allocated);
 		if (err) { exit_code = 1; goto cleanup; }
 		goto cleanup;
@@ -221,7 +220,7 @@ cleanup:
 	marrfree(timers);
 
 	arena_free(&analysis_arena);
-	deinit_intern_table();
+	deinit_intern_pool(&intern_table);
 	arena_free(&arena);
 	return exit_code;
 }

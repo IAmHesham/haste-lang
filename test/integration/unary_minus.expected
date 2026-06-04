@@ -1,5 +1,0 @@
-; ModuleID = 'test/integration/unary_minus.haste'
-source_filename = "test/integration/unary_minus.haste"
-
-@a = constant i32 -5
-@b = constant i32 -30

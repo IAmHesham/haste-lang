@@ -290,20 +290,25 @@ static int print_haste_ast_node(stream_t file, const struct haste_ast_node *node
 }
 
 void *node_into_value(
-	struct Allocator allocator,
+	struct intern_pool *pool,
 	void *nd,
 	struct haste_value value)
 {
-	struct haste_ast_value *node = nd;
-	if (node == NULL) {
-		node = create(allocator, struct haste_ast_value, 0);
+	struct haste_ast_node *node = nd;
+
+	struct haste_ast_node *new_node = intern_node(
+		pool, &(struct haste_ast_value){
+			.base.kind = ND_VALUE,
+			.base.type = typeof_value(value),
+			.value = value,
+		}.base);
+
+	if (node != NULL) {
+		new_node->location = node->location;
+		new_node->next = node->next;
 	}
 
-	node->base.kind = ND_VALUE;
-	node->value = value;
-	node->base.type = typeof_value(value);
-
-	return node;
+	return new_node;
 }
 
 int print_haste_ast(stream_t file, const struct haste_ast_node *root)

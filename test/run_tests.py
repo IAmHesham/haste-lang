@@ -101,14 +101,14 @@ TEST_GROUPS = [
     },
     {
         "name": "integration",
-        "kind": "llvm",
+        "kind": "c",
         "dir": "test/integration",
         "pattern": "*.haste",
-        "flags": ["--llvm", "--no-fun"],
+        "flags": ["--c", "--no-fun"],
         "expected_suffix": "expected",
         "got_suffix": "got",
         "skip_lines": 2,
-        "file_output": ".ll",
+        "file_output": ".c",
     },
 ]
 # ────────────────────────────────────────────────────────────────

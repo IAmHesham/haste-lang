@@ -1,4 +1,0 @@
-const a: int8 = 42;
-const b: int16 = 1000;
-const c: int32 = 100000;
-const d: int64 = 9999999;

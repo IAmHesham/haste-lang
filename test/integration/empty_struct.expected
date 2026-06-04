@@ -1,7 +1,0 @@
-; ModuleID = 'test/integration/empty_struct.haste'
-source_filename = "test/integration/empty_struct.haste"
-
-%struct.type.Empty.0 = type {}
-
-@e = constant %struct.type.Empty.0 zeroinitializer
-@e2 = constant %struct.type.Empty.0 zeroinitializer

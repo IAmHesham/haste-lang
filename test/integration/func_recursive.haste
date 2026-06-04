@@ -1,3 +1,0 @@
-func fact(n: int): int do
-	return n * fact(n - 1);
-end

@@ -6,12 +6,17 @@
 #include <string.h>
 
 struct parser {
-	struct Allocator allocator;
+	struct intern_pool *pool;
 	struct token_stream stream;
 	// source_file_id src;
 	struct token previous;
 	bool has_error;
 };
+
+static const char *intern_token_ident(struct parser *self, struct token tok)
+{
+	return intern_str(self->pool, tok.ident, tok.len);
+}
 
 enum precedence {
 	PREC_NONE,
@@ -33,18 +38,11 @@ struct parser_rule {
 };
 
 #define create_node(self_, T_, ...) \
-	(void*)_create_node((self_), &(T_) { __VA_ARGS__ }, sizeof(T_))
+	(void*)_create_node((self_), &(T_) { __VA_ARGS__ })
 
-inline static struct haste_ast_node *_create_node(struct parser *self, void *value, size_t size)
+inline static void *_create_node(struct parser *self, void *value)
 {
-	// TODO:
-	size_t the_size = sizeof(struct haste_ast_value);
-	if (the_size < size) {
-		the_size = size;
-	}
-	void *result = alloc(self->allocator, the_size);
-	memcpy(result, value, size);
-	return result;
+	return intern_node(self->pool, value);
 }
 
 static struct parser_rule get_rule(struct token token);
@@ -192,7 +190,7 @@ struct haste_ast_node *binary(struct parser *self, struct haste_ast_node *lhs)
 		.op_loc = as_location(op_tok));
 }
 
-struct haste_ast_node *field_access(struct parser *self, struct haste_ast_node *lhs)
+	struct haste_ast_node *field_access(struct parser *self, struct haste_ast_node *lhs)
 {
 	struct location start = lhs->location;
 	struct token token = peek(self);
@@ -206,7 +204,7 @@ struct haste_ast_node *field_access(struct parser *self, struct haste_ast_node *
 		.base.kind = ND_ACCESS,
 		.base.location = location_conjoin(start, end),
 		.lhs = lhs,
-		.field = string(.chars = token.ident, .len = token.len),
+		.field = string(.chars = intern_token_ident(self, token), .len = token.len),
 		.field_loc = as_location(token));
 }
 
@@ -301,7 +299,7 @@ static struct haste_ast_node *ident(struct parser *self)
 		struct haste_ast_ident,
 		.base.kind = ND_IDENT,
 		.base.location = as_location(lit),
-		.value = as_string(lit.ident));
+		.value = string(.chars = intern_str(self->pool, lit.ident, lit.len), .len = lit.len));
 }
 
 static struct haste_ast_node *int_bits(struct parser *self)
@@ -377,9 +375,9 @@ static struct haste_ast_node *struct_type_prefix(struct parser *self)
 	while (not check(self, TK_CLOSE_BRACE) and not ended(self)) {
 		const struct location start = as_location(peek(self));
 		struct token_list names = {0};
-		arrpush(self->allocator, names, consume(self, TK_IDENT, "Expected field name."));
+		arrpush(self->pool->allocator, names, consume(self, TK_IDENT, "Expected field name."));
 		while (match(self, TK_COMMA)) {
-			arrpush(self->allocator, names, consume(self, TK_IDENT, "Expected field name."));
+			arrpush(self->pool->allocator, names, consume(self, TK_IDENT, "Expected field name."));
 		}
 
 		consume(self, TK_COLON, "Expected ':' after field name.");
@@ -393,16 +391,17 @@ static struct haste_ast_node *struct_type_prefix(struct parser *self)
 		}
 		const struct location end = as_location(consume(self, TK_SEMI_COLON, "Expected ';' after field declaration."));
 
-		struct string *name_strs = alloc(self->allocator, sizeof(struct string) * names.len);
-		struct location *name_locs = alloc(self->allocator, sizeof(struct location) * names.len);
+		struct string *name_strs = alloc(self->pool->arena, sizeof(struct string) * names.len);
+		struct location *name_locs = alloc(self->pool->arena, sizeof(struct location) * names.len);
 		for (size_t i = 0; i < names.len; i++) {
-			name_strs[i] = string(.chars = names.items[i].ident, .len = names.items[i].len);
+			name_strs[i] = string(.chars = intern_token_ident(self, names.items[i]), .len = names.items[i].len);
 			name_locs[i] = as_location(names.items[i]);
 		}
 
 		current->next = create_node(
 			self,
 			struct haste_ast_struct_field,
+			.base.kind = ND_STRUCT_FIELD,
 			.base.location = location_conjoin(start, end),
 			.name_count = names.len,
 			.names = name_strs,
@@ -410,6 +409,7 @@ static struct haste_ast_node *struct_type_prefix(struct parser *self)
 			.type = type,
 			.default_value = default_value);
 		current = current->next;
+		arrfree(self->pool->allocator, names);
 	}
 
 	const struct location end = as_location(consume(self, TK_CLOSE_BRACE, "Expected '}' after struct fields."));
@@ -450,8 +450,8 @@ static struct haste_ast_node *struct_literal_infix(struct parser *self, struct h
 			struct haste_ast_struct_lit_field,
 			.base.kind = ND_STRUCT_LIT_FIELD,
 			.base.location = location_conjoin(start, end),
-			.name = string(.chars = name.ident, .len = name.len),
-			.name_loc = as_location(name),
+	.name        = string(.chars = name.ident != NULL ? intern_token_ident(self, name) : NULL, .len = name.len),
+		.name_loc    = as_location(name),
 			.value = value);
 		current = current->next;
 	}
@@ -578,15 +578,15 @@ static struct haste_ast_node *variable_decl(struct parser *self, bool is_constan
 
 	if (value == NULL and match(self, TK_EQ)) value = expr(self);
 
-	const struct location end = as_location(consume(self, TK_SEMI_COLON, "Expected ';' at the end of the variable declaration."));
-	/* const struct location end = as_location(previous(self)); */
+	/* const struct location end = as_location(consume(self, TK_SEMI_COLON, "Expected ';' at the end of the variable declaration.")); */
+	const struct location end = as_location(previous(self));
 	return create_node(
 		self,
 		struct haste_ast_var_decl,
 		.base.kind = ND_VAR_DECL,
 		.base.location = location_conjoin(start, end),
 		.is_constant = is_constant,
-		.name        = string(.chars = name.ident, .len = name.len),
+		.			name = string(.chars = intern_token_ident(self, name), .len = name.len),
 		.name_loc    = as_location(name),
 		.type        = type,
 		.value       = value);
@@ -605,18 +605,18 @@ static struct haste_ast_node *func_decl(struct parser *self)
 		const struct location param_start = as_location(peek(self));
 		// parse names: x or x, y
 		struct token_list names = {0};
-		arrpush(self->allocator, names, consume(self, TK_IDENT, "Expected parameter name."));
+		arrpush(self->pool->allocator, names, consume(self, TK_IDENT, "Expected parameter name."));
 		while (match(self, TK_COMMA)) {
 			if (check(self, TK_CLOSE_PAREN) or check(self, TK_COLON)) break;
-			arrpush(self->allocator, names, consume(self, TK_IDENT, "Expected parameter name."));
+			arrpush(self->pool->allocator, names, consume(self, TK_IDENT, "Expected parameter name."));
 		}
 		consume(self, TK_COLON, "Expected ':' after parameter name(s).");
 		struct haste_ast_node *type = expr(self);
 
-		struct string *name_strs = alloc(self->allocator, sizeof(struct string) * names.len);
-		struct location *name_locs = alloc(self->allocator, sizeof(struct location) * names.len);
+		struct string *name_strs = alloc(self->pool->arena, sizeof(struct string) * names.len);
+		struct location *name_locs = alloc(self->pool->arena, sizeof(struct location) * names.len);
 		for (size_t i = 0; i < names.len; i++) {
-			name_strs[i] = string(.chars = names.items[i].ident, .len = names.items[i].len);
+			name_strs[i] = string(.chars = intern_token_ident(self, names.items[i]), .len = names.items[i].len);
 			name_locs[i] = as_location(names.items[i]);
 		}
 
@@ -631,6 +631,7 @@ static struct haste_ast_node *func_decl(struct parser *self)
 			.name_locs = name_locs,
 			.type = type);
 		current = current->next;
+		arrfree(self->pool->allocator, names);
 
 		if (check(self, TK_COMMA)) advance(self);
 	}
@@ -661,7 +662,7 @@ static struct haste_ast_node *func_decl(struct parser *self)
 		struct haste_ast_func_decl,
 		.base.kind = ND_FUNC_DECL,
 		.base.location = location_conjoin(start, end_loc),
-		.name = string(.chars = name.ident, .len = name.len),
+		.name = string(.chars = intern_token_ident(self, name), .len = name.len),
 		.name_loc = as_location(name),
 		.params = (void*)head.next,
 		.return_type = return_type,
@@ -704,6 +705,7 @@ static struct haste_ast_node *do_prefix(struct parser *self)
 	struct location start = as_location(previous(self));
 	struct haste_ast_node block_head_stmts = {0};
 	struct haste_ast_node *block_current = &block_head_stmts;
+	bool returning_block = false;
 
 	while (not check(self, TK_KW_END) and not ended(self)) {
 		struct haste_ast_node *stamt = stmt(self);
@@ -713,10 +715,17 @@ static struct haste_ast_node *do_prefix(struct parser *self)
 		if (match(self, TK_SEMI_COLON)) {
 			while (match(self, TK_SEMI_COLON));
 			// statement continues
+			continue;
 		}
-		/* else { */
-		/* 	break; */
-		/* } */
+
+		if (stamt->kind == ND_RETURN) continue;
+
+		if (check(self, TK_KW_END)) {
+			returning_block = true;
+			break;
+		}
+
+		report_error(self, "Expected ';' or 'end' here.");
 	}
 
 	struct location end = as_location(consume(self, TK_KW_END, "Expected 'end' after block."));
@@ -725,7 +734,8 @@ static struct haste_ast_node *do_prefix(struct parser *self)
 		struct haste_ast_block,
 		.base.kind = ND_BLOCK,
 		.base.location = location_conjoin(start, end),
-		.stmts = block_head_stmts.next);
+		.stmts = block_head_stmts.next,
+		.returning = returning_block);
 }
 
 static struct haste_ast_node *return_prefix(struct parser *self)
@@ -782,17 +792,16 @@ static struct haste_ast_node *stmt(struct parser *self)
 			.base.kind = ND_RETURN,
 			.base.location = as_location(previous(self)),
 			.value = ret_value);
-		match(self, TK_SEMI_COLON);
 		return result;
 	}
 
 	return expr(self);
 }
 
-Error parse(struct Allocator allocator, const source_file_id src)
+Error parse(struct intern_pool *pool, const source_file_id src)
 {
 	struct parser parser = {
-		.allocator = allocator,
+		.pool = pool,
 		.stream = token_stream(src),
 	};
 

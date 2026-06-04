@@ -1,74 +1,60 @@
 #include "haste.h"
+#include "dynamic_memory_stream.h"
+#include "my_allocator.h"
 #include "my_common.h"
 #include "my_stream.h"
-#include "llvm-c/Core.h"
 #include <assert.h>
-#include <llvm-c/Types.h>
+#include <signal.h>
 
 struct type_map_entry {
-	TypeID haste_type;
-	LLVMTypeRef llvm_type;
-};
-
-struct local_entry {
-	const char *name;
-	LLVMValueRef value;
-	LLVMTypeRef elem_type;
+	struct haste_type_info *haste_type;
+	const char *c_name;
 };
 
 struct codegen_context {
-	LLVMContextRef llvm_ctx;
-	LLVMBuilderRef builder;
-	LLVMModuleRef module;
 	struct Allocator allocator;
+	stream_t structs_stream;
+	stream_t globals_stream;
+	stream_t decls_stream;
+	stream_t impls_stream;
+	stream_t current_block_stream;
+    
 	struct { size_t cap, len; struct type_map_entry *items; } struct_types;
-	LLVMValueRef current_func;
-	struct { size_t cap, len; struct local_entry *items; } locals;
+	uint64_t str_counter;
+	uint64_t tmp_counter;
 };
 
-static LLVMValueRef codegen_expr(struct codegen_context *ctx, const struct haste_ast_node *node);
-static LLVMValueRef codegen_stmt(struct codegen_context *ctx, const struct haste_ast_node *node);
+static const char *codegen_expr(struct codegen_context *ctx, const struct haste_ast_node *node);
+static const char *codegen_stmt(struct codegen_context *ctx, const struct haste_ast_node *node);
+static void codegen_location(stream_t stream, const struct location location);
 
 static void context_deinit(struct codegen_context *ctx)
 {
-	LLVMDisposeBuilder(ctx->builder);
-	LLVMDisposeModule(ctx->module);
-	LLVMContextDispose(ctx->llvm_ctx);
 	arrfree(ctx->allocator, ctx->struct_types);
-	arrfree(ctx->allocator, ctx->locals);
+	sclose(ctx->structs_stream);
+	sclose(ctx->globals_stream);
+	sclose(ctx->decls_stream);
+	sclose(ctx->impls_stream);
+	if (ctx->current_block_stream.data != NULL) {
+		sclose(ctx->current_block_stream);
+	}
 	*ctx = (struct codegen_context){0};
 }
 
-// ── LLVM type helpers ─────────────────────────────────────────────
+// ── Haste type → C type ────────────────────────────────────────
 
-#define DEFINE_LLVM_TYPE_FN(name, llvm_call) \
-	static LLVMTypeRef t_##name(struct codegen_context *ctx) { return llvm_call; }
-
-DEFINE_LLVM_TYPE_FN(i8,   LLVMInt8TypeInContext(ctx->llvm_ctx))
-DEFINE_LLVM_TYPE_FN(i32,  LLVMInt32TypeInContext(ctx->llvm_ctx))
-DEFINE_LLVM_TYPE_FN(i64,  LLVMInt64TypeInContext(ctx->llvm_ctx))
-DEFINE_LLVM_TYPE_FN(f32,  LLVMFloatTypeInContext(ctx->llvm_ctx))
-DEFINE_LLVM_TYPE_FN(void, LLVMVoidTypeInContext(ctx->llvm_ctx))
-
-static LLVMTypeRef t_i8ptr(struct codegen_context *ctx)
-{
-	return LLVMPointerType(t_i8(ctx), 0);
-}
-
-// ── Haste type → LLVM type ────────────────────────────────────────
-
-static LLVMTypeRef llvm_type(struct codegen_context *ctx, struct haste_type type)
+static const char *c_type(struct codegen_context *ctx, struct haste_type type)
 {
 	struct haste_type_info *tp = AS_TYPE_INFO(type);
 
-	if (tp->kind == HASTE_TY_UNTYPED_INT or tp->kind == HASTE_TY_ZERO) return t_i32(ctx);
-	if (tp->kind == HASTE_TY_USIZE) return t_i64(ctx);
-	if (tp->kind == HASTE_TY_FLOAT or tp->kind == HASTE_TY_UNTYPED_FLOAT) return t_f32(ctx);
-	if (tp->kind == HASTE_TY_VOID) return t_void(ctx);
-	if (tp->kind == HASTE_TY_UNTYPED_STRING or tp->kind == HASTE_TY_CSTR or tp->kind == HASTE_TY_STRING) return t_i8ptr(ctx);
+	if (tp->kind == HASTE_TY_UNTYPED_INT or tp->kind == HASTE_TY_ZERO) return "int32_t";
+	if (tp->kind == HASTE_TY_USIZE) return "uint64_t";
+	if (tp->kind == HASTE_TY_FLOAT or tp->kind == HASTE_TY_UNTYPED_FLOAT) return "float";
+	if (tp->kind == HASTE_TY_VOID) return "void";
+	if (tp->kind == HASTE_TY_UNTYPED_STRING or tp->kind == HASTE_TY_CSTR or tp->kind == HASTE_TY_STRING) return "char*";
 
 	if (tp->kind == HASTE_TY_INT or tp->kind == HASTE_TY_UINT) {
-		return LLVMIntTypeInContext(ctx->llvm_ctx, tp->bit_size);
+		return tsprint("{s}int{z}_t", tp->kind == HASTE_TY_UINT ? "u" : "", tp->bit_size);
 	}
 
 	if (tp->kind == HASTE_TY_STRUCT or tp->kind == HASTE_TY_AUTO_STRUCT) {
@@ -76,116 +62,94 @@ static LLVMTypeRef llvm_type(struct codegen_context *ctx, struct haste_type type
 		struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
 
 		for (size_t i = 0; i < ctx->struct_types.len; i += 1) {
-			if (ctx->struct_types.items[i].haste_type == AS_TYPEID(type)) {
-				return ctx->struct_types.items[i].llvm_type;
+			if (ctx->struct_types.items[i].haste_type == type.value.type) {
+				return ctx->struct_types.items[i].c_name;
 			}
 		}
 
-		char *name = tsprint("struct.type.{s}.{z}", type_info->name then type_info->name otherwise "auto", ctx->struct_types.len);
-		LLVMTypeRef llvm_st = LLVMStructCreateNamed(ctx->llvm_ctx, name);
+		char *struct_name = tsprint("struct_type_{s}_{z}", type_info->name then type_info->name otherwise "auto", ctx->struct_types.len);
+		char *c_name = tsprint("struct {s}", struct_name);
 
 		arrpush(ctx->allocator, ctx->struct_types, ((struct type_map_entry){
-			.haste_type = AS_TYPEID(type),
-			.llvm_type = llvm_st,
+			.haste_type = type.value.type,
+			.c_name = c_name,
 		}));
 
-		LLVMTypeRef members[SAFE_COUNT(st->len)];
+		sprint(ctx->structs_stream, "struct {s} {\n", struct_name);
 		iarreach (i, *st) {
-			members[i] = llvm_type(ctx, st->items[i].type);
+			sprint(ctx->structs_stream, "\t{s} f_{z};\n", c_type(ctx, st->items[i].type), i);
 		}
-		LLVMStructSetBody(llvm_st, members, (unsigned)st->len, false);
-		return llvm_st;
+		sprintln(ctx->structs_stream, "};");
+		return c_name;
 	}
 
+	raise(SIGSEGV);
 	unreachable();
 }
 
 // ── String globals ────────────────────────────────────────────────
 
-static uint64_t string_global_counter = 0;
-
-static LLVMValueRef emit_string_global(struct codegen_context *ctx,
+static const char *emit_string_global(struct codegen_context *ctx,
                                        const char *data, uint64_t len)
 {
-	char *name = tsprint(".str.{lu}", string_global_counter++);
-
-	LLVMValueRef global = LLVMAddGlobal(ctx->module,
-		LLVMArrayType(t_i8(ctx), len + 1), name);
-	LLVMSetInitializer(global,
-		LLVMConstStringInContext(ctx->llvm_ctx, data, (unsigned)len, false));
-	LLVMSetGlobalConstant(global, true);
-	LLVMSetLinkage(global, LLVMPrivateLinkage);
-	LLVMSetUnnamedAddress(global, LLVMGlobalUnnamedAddr);
-	return global;
-}
-
-// ── Local variable management ─────────────────────────────────────
-
-static struct local_entry push_local(struct codegen_context *ctx, const char *name, LLVMValueRef value, LLVMTypeRef elem_type)
-{
-	arrpush(ctx->allocator, ctx->locals, ((struct local_entry){ .name = name, .value = value, .elem_type = elem_type }));
-	return ctx->locals.items[ctx->locals.len - 1];
-}
-
-static struct local_entry find_local_entry(
-	struct codegen_context *ctx,
-	const char *name)
-{
-	for (size_t i = ctx->locals.len; i > 0; i--) {
-		if (strcmp(ctx->locals.items[i - 1].name, name) == 0)
-			return ctx->locals.items[i - 1];
+	char *name = tsprint("str_{lu}", ctx->str_counter++);
+	sprint(ctx->globals_stream, "static const char {s}[] = ", name);
+	sprint(ctx->globals_stream, "\"");
+	for (uint64_t i = 0; i < len; i++) {
+		switch (data[i]) {
+			case '\n': sprint(ctx->globals_stream, "\\n"); break;
+			case '"': sprint(ctx->globals_stream, "\\\""); break;
+			case '\\': sprint(ctx->globals_stream, "\\\\"); break;
+			case '\0': sprint(ctx->globals_stream, "\\0"); break;
+			default: sputc(ctx->globals_stream, data[i]); break;
+		}
 	}
-	return (struct local_entry){0};
+	sprintln(ctx->globals_stream, "\";");
+	return name;
 }
 
-static LLVMValueRef find_local(
-	struct codegen_context *ctx, const char *name)
-{
-	for (size_t i = ctx->locals.len; i > 0; i--) {
-		if (strcmp(ctx->locals.items[i - 1].name, name) == 0)
-			return ctx->locals.items[i - 1].value;
-	}
-	return NULL;
-}
+// ── Haste value → C value ──────────────────────────────────────
 
-// ── Haste value → LLVM value ──────────────────────────────────────
-
-static LLVMValueRef llvm_value(struct codegen_context *ctx, struct haste_value value)
+static const char *c_value(struct codegen_context *ctx, struct haste_value value)
 {
 	assert(not IS_TYPE(value));
 
 	switch (value.kind) {
 	case HASTE_VL_ZERO: {
-		return LLVMConstInt(t_i32(ctx), 0, true);
+		return "0";
 	}
 	case HASTE_VL_SCALAR: {
-		int k = type_pool_get(value.type_id)->kind;
+		int k = value.type_info->kind;
 		if (k == HASTE_TY_USIZE)
-			return LLVMConstInt(t_i64(ctx), value.integer, false);
+			return tsprint("{ld}ULL", value.integer);
 		if (k == HASTE_TY_INT or k == HASTE_TY_UNTYPED_INT or k == HASTE_TY_UINT) {
-			LLVMTypeRef int_type = llvm_type(ctx, typeof_value(value));
-			return LLVMConstInt(int_type, value.integer, k != HASTE_TY_UINT);
+			return tsprint("{ld}", value.integer);
 		}
 		if (k == HASTE_TY_FLOAT or k == HASTE_TY_UNTYPED_FLOAT)
-			return LLVMConstReal(t_f32(ctx), value.floating);
+			return tsprint("{f}f", value.floating);
 		unreachable();
 	}
 	case HASTE_VL_OBJ: {
 		if (value.obj->kind == HASTE_OBJ_STRING) {
 			struct haste_string_object *s = (struct haste_string_object*)value.obj;
-			LLVMValueRef global = emit_string_global(ctx, s->data, s->len);
-			return LLVMConstBitCast(global, t_i8ptr(ctx));
+			return emit_string_global(ctx, s->data, s->len);
 		}
 
 		if (value.obj->kind == HASTE_OBJ_STRUCT) {
-			LLVMTypeRef llvm_st = llvm_type(ctx, typeof_value(value));
 			struct haste_struct_object *so = (struct haste_struct_object*)value.obj;
 			struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(typeof_value(value));
-			LLVMValueRef members[SAFE_COUNT(st->len)];
+			char *buf = calloc(4096, 1);
+			stream_t str = smemopen(buf, 4096);
+			sprint(str, "({s}){{", c_type(ctx, typeof_value(value)));
 			iarreach (i, *st) {
-				members[i] = llvm_value(ctx, so->fields[i]);
+				if (i > 0) sprint(str, ", ");
+				sprint(str, "{s}", c_value(ctx, so->fields[i]));
 			}
-			return LLVMConstNamedStruct(llvm_st, members, (unsigned)st->len);
+			sprint(str, "}");
+            const char *res = tsprint("{s}", buf);
+            sclose(str);
+            free(buf);
+			return res;
 		}
 
 		unreachable();
@@ -202,38 +166,17 @@ static LLVMValueRef llvm_value(struct codegen_context *ctx, struct haste_value v
 
 // ── Expression codegen ────────────────────────────────────────────
 
-static LLVMValueRef codegen_cast(struct codegen_context *ctx, const struct haste_ast_cast *node)
+static const char *codegen_cast(struct codegen_context *ctx, const struct haste_ast_cast *node)
 {
-	LLVMValueRef val = codegen_expr(ctx, node->expr);
-	LLVMTypeRef target_type = llvm_type(ctx, node->base.type);
-	LLVMTypeRef src_type = LLVMTypeOf(val);
-
-	if (LLVMGetTypeKind(src_type) == LLVMGetTypeKind(target_type))
-		return val;
-
-	if (LLVMGetTypeKind(src_type) == LLVMIntegerTypeKind
-		and LLVMGetTypeKind(target_type) == LLVMFloatTypeKind)
-		return LLVMBuildSIToFP(ctx->builder, val, target_type, "cast");
-
-	if (LLVMGetTypeKind(src_type) == LLVMFloatTypeKind
-		and LLVMGetTypeKind(target_type) == LLVMIntegerTypeKind)
-		return LLVMBuildFPToSI(ctx->builder, val, target_type, "cast");
-
-	if (LLVMGetTypeKind(src_type) == LLVMIntegerTypeKind
-		and LLVMGetTypeKind(target_type) == LLVMIntegerTypeKind)
-		return LLVMBuildIntCast2(ctx->builder, val, target_type, true, "cast");
-
-	if (LLVMGetTypeKind(src_type) == LLVMPointerTypeKind
-		and LLVMGetTypeKind(target_type) == LLVMPointerTypeKind)
-		return LLVMBuildBitCast(ctx->builder, val, target_type, "cast");
-
-	unreachable();
+	const char *val = codegen_expr(ctx, node->expr);
+	const char *target_type = c_type(ctx, node->base.type);
+	return tsprint("({s}){s}", target_type, val);
 }
 
-static LLVMValueRef codegen_value(struct codegen_context *ctx, const struct haste_ast_value *node)
+static const char *codegen_value(struct codegen_context *ctx, const struct haste_ast_value *node)
 {
 	if (is_comptime_known(node->value)) {
-		return llvm_value(ctx, node->value);
+		return c_value(ctx, node->value);
 	}
 
 	if (IS_RUNTIME(node->value)) {
@@ -242,211 +185,225 @@ static LLVMValueRef codegen_value(struct codegen_context *ctx, const struct hast
 	unreachable();
 }
 
-static LLVMValueRef codegen_lvalue(struct codegen_context *ctx, const struct haste_ast_node *node);
+static const char *codegen_lvalue(struct codegen_context *ctx, const struct haste_ast_node *node);
 
-static LLVMValueRef codegen_ident(struct codegen_context *ctx, const struct haste_ast_ident *node)
+static const char *codegen_ident(struct codegen_context *ctx, const struct haste_ast_ident *node)
 {
-	LLVMValueRef ptr = codegen_lvalue(ctx, &node->base);
-	return LLVMBuildLoad2(ctx->builder, llvm_type(ctx, node->base.type), ptr, node->value.chars);
+	return codegen_lvalue(ctx, &node->base);
 }
 
-static LLVMValueRef codegen_binary(struct codegen_context *ctx, const struct haste_ast_binary *node)
+static const char *codegen_binary(struct codegen_context *ctx, const struct haste_ast_binary *node)
 {
-	LLVMValueRef lhs = codegen_expr(ctx, node->lhs);
-	LLVMValueRef rhs = codegen_expr(ctx, node->rhs);
+	const char *lhs = codegen_expr(ctx, node->lhs);
+	const char *rhs = codegen_expr(ctx, node->rhs);
 
 	switch (node->op) {
-	case TK_PLUS:   return LLVMBuildAdd  (ctx->builder, lhs, rhs, "addtmp");
-	case TK_MINUS:  return LLVMBuildSub  (ctx->builder, lhs, rhs, "subtmp");
-	case TK_STAR:   return LLVMBuildMul  (ctx->builder, lhs, rhs, "multmp");
-	case TK_FSLASH: return LLVMBuildSDiv (ctx->builder, lhs, rhs, "divtmp");
+	case TK_PLUS:   return tsprint("({s} + {s})", lhs, rhs);
+	case TK_MINUS:  return tsprint("({s} - {s})", lhs, rhs);
+	case TK_STAR:   return tsprint("({s} * {s})", lhs, rhs);
+	case TK_FSLASH: return tsprint("({s} / {s})", lhs, rhs);
 	default: unreachable();
 	}
 }
 
-static LLVMValueRef codegen_unary(struct codegen_context *ctx, const struct haste_ast_unary *node)
+static const char *codegen_unary(struct codegen_context *ctx, const struct haste_ast_unary *node)
 {
-	LLVMValueRef rhs = codegen_expr(ctx, node->rhs);
+	const char *rhs = codegen_expr(ctx, node->rhs);
 	switch (node->op) {
-	case TK_MINUS: return LLVMBuildNeg(ctx->builder, rhs, "negtmp");
-	case TK_PLUS:  return rhs;
+	case TK_MINUS: return tsprint("(-{s})", rhs);
+	case TK_PLUS:  return tsprint("(+{s})", rhs);
 	default: unreachable();
 	}
 }
 
-static LLVMValueRef codegen_access(struct codegen_context *ctx, const struct haste_ast_access *node)
+static const char *codegen_access(struct codegen_context *ctx, const struct haste_ast_access *node)
 {
-	LLVMValueRef ptr = codegen_lvalue(ctx, &node->base);
-	return LLVMBuildLoad2(ctx->builder, llvm_type(ctx, node->base.type), ptr, node->field.chars);
+	const char *ptr = codegen_lvalue(ctx, &node->base);
+	return ptr; // lvalue already produced the dot accessor string!
 }
 
-static LLVMValueRef codegen_lvalue(struct codegen_context *ctx, const struct haste_ast_node *node)
+static const char *codegen_lvalue(struct codegen_context *ctx, const struct haste_ast_node *node)
 {
 	switch (node->kind) {
 	case ND_IDENT: {
 		const struct haste_ast_ident *ident = (const void*)node;
-		struct local_entry local = find_local_entry(ctx, ident->value.chars);
-		if (local.name != NULL) return local.value;
-		LLVMValueRef global = LLVMGetNamedGlobal(ctx->module, ident->value.chars);
-		if (global != NULL) return global;
-		unreachable();
+		return ident->value.chars;
 	}
 	case ND_ACCESS: {
 		const struct haste_ast_access *access = (const void*)node;
-		LLVMValueRef ptr = codegen_lvalue(ctx, access->lhs);
-		LLVMTypeRef struct_type = llvm_type(ctx, access->lhs->type);
-		return LLVMBuildStructGEP2(ctx->builder, struct_type, ptr, (unsigned)access->field_index, access->field.chars);
+		const char *ptr = codegen_lvalue(ctx, access->lhs);
+		return tsprint("({s}).f_{lu}", ptr, (unsigned long)access->field_index);
 	}
 	default:
 		unreachable();
 	}
 }
 
-static LLVMValueRef codegen_func_call(struct codegen_context *ctx, const struct haste_ast_func_call *node)
+static const char *codegen_func_call(struct codegen_context *ctx, const struct haste_ast_func_call *node)
 {
 	const char *fn_name = "";
 	if (node->callee->kind == ND_IDENT) {
 		fn_name = ((const struct haste_ast_ident*)node->callee)->value.chars;
 	}
 
-	LLVMValueRef fn = LLVMGetNamedFunction(ctx->module, fn_name);
-	if (fn == NULL) {
-		fprintf(stderr, "error: function '%s' not found in module\n", fn_name);
-		return LLVMConstInt(t_i32(ctx), 0, true);
-	}
-
-	// Count args
-	size_t arg_count = 0;
-	for (const struct haste_ast_func_call_arg *a = node->args; a; a = a->next)
-		arg_count++;
-
-	LLVMValueRef args[arg_count > 0 ? arg_count : 1];
+	char *args_buf = calloc(4096, 1);
+	stream_t str = smemopen(args_buf, 4096);
+	
 	size_t i = 0;
 	for (const struct haste_ast_func_call_arg *a = node->args; a; a = a->next) {
-		args[i++] = codegen_expr(ctx, a->value);
+		if (i > 0) sprint(str, ", ");
+		sprint(str, "{s}", codegen_expr(ctx, a->value));
+		i++;
 	}
 
-	return LLVMBuildCall2(ctx->builder, LLVMGlobalGetValueType(fn), fn, args, (unsigned)arg_count, "calltmp");
+    const char *res = tsprint("{s}({s})", fn_name, args_buf);
+    sclose(str);
+    free(args_buf);
+	return res;
 }
 
-static LLVMValueRef codegen_block(struct codegen_context *ctx, const struct haste_ast_block *node)
+static const char *codegen_block(struct codegen_context *ctx, const struct haste_ast_block *node)
 {
-	LLVMValueRef last_val = NULL;
+	const char *ret_type = c_type(ctx, node->base.type);
+	const char *tmp = NULL;
+
+	if (node->returning) {
+		tmp = tsprint("tmp_{lu}", ctx->tmp_counter++);
+		sprintln(ctx->current_block_stream, "{s} {s};", ret_type, tmp);
+	}
+	
+	sprintln(ctx->current_block_stream, "{");
+	const char *last_val = NULL;
 	if (node->stmts != NULL) {
 		leach (struct haste_ast_node, stmt, node->stmts) {
 			last_val = codegen_stmt(ctx, stmt);
 		}
 	}
-	return last_val;
+	
+	if (tmp != NULL and last_val != NULL) {
+		sprintln(ctx->current_block_stream, "{s} = {s};", tmp, last_val);
+	}
+	sprintln(ctx->current_block_stream, "}");
+	
+	return tmp;
 }
 
-static LLVMValueRef codegen_return(struct codegen_context *ctx, const struct haste_ast_return *node)
+static const char *codegen_return(struct codegen_context *ctx, const struct haste_ast_return *node)
 {
 	if (node->value != NULL) {
-		const LLVMValueRef val = codegen_expr(ctx, node->value);
-		return LLVMBuildRet(ctx->builder, val);
+		const char *val = codegen_expr(ctx, node->value);
+		sprintln(ctx->current_block_stream, "return {s};", val);
+	} else {
+		sprintln(ctx->current_block_stream, "return;");
 	}
-	return LLVMBuildRetVoid(ctx->builder);
+	return "";
 }
 
-static LLVMValueRef codegen_expr(struct codegen_context *ctx, const struct haste_ast_node *node)
+static const char *codegen_struct_lit(struct codegen_context *ctx, const struct haste_ast_struct_literal *node)
+{
+	char *buf = NULL;
+	stream_t str = sdynmemopen(ctx->allocator, &buf);
+	const struct haste_type type = node->base.type;
+	const char *tmp = tsprint("tmp_{lu}", ctx->tmp_counter++);
+	sprintln(str, "{s} {s};", c_type(ctx, type), tmp);
+	leach (struct haste_ast_struct_lit_field, field, node->fields) {
+		const char *value = codegen_expr(ctx, field->value);
+		sprintln(str, "{s}.{string} = {s};", tmp, field->name, value);
+	}
+	sprintln(ctx->current_block_stream, "{s}", buf);
+	sclose(str);
+	return tmp;
+}
+
+static const char *codegen_expr(struct codegen_context *ctx, const struct haste_ast_node *node)
 {
 	switch (node->kind) {
-	case ND_VALUE:     return codegen_value    (ctx, (void*)node);
-	case ND_CAST:      return codegen_cast     (ctx, (void*)node);
-	case ND_GROUPING:  return codegen_expr     (ctx, ((const struct haste_ast_grouping*)node)->child);
-	case ND_IDENT:     return codegen_ident    (ctx, (void*)node);
-	case ND_BINARY:    return codegen_binary   (ctx, (void*)node);
-	case ND_UNARY:     return codegen_unary    (ctx, (void*)node);
-	case ND_ACCESS:    return codegen_access   (ctx, (void*)node);
-	case ND_FUNC_CALL: return codegen_func_call(ctx, (void*)node);
-	case ND_BLOCK:     return codegen_block    (ctx, (void*)node);
-	case ND_RETURN:    return codegen_return   (ctx, (void*)node);
-	default: unimplemented();
+	case ND_VALUE:          return codegen_value    (ctx, (void*)node);
+	case ND_CAST:           return codegen_cast     (ctx, (void*)node);
+	case ND_GROUPING:       return codegen_expr     (ctx, ((const struct haste_ast_grouping*)node)->child);
+	case ND_IDENT:          return codegen_ident    (ctx, (void*)node);
+	case ND_BINARY:         return codegen_binary   (ctx, (void*)node);
+	case ND_UNARY:          return codegen_unary    (ctx, (void*)node);
+	case ND_ACCESS:         return codegen_access   (ctx, (void*)node);
+	case ND_FUNC_CALL:      return codegen_func_call(ctx, (void*)node);
+	case ND_BLOCK:          return codegen_block    (ctx, (void*)node);
+	case ND_RETURN:         return codegen_return   (ctx, (void*)node);
+	case ND_STRUCT_LITERAL: return codegen_struct_lit(ctx, (void*)node);
+	case ND_INTEGER_LIT: {
+		const struct haste_ast_integer_lit *lit = (const void*)node;
+		return tsprint("{ld}", lit->value);
 	}
+	case ND_FLOAT_LIT: {
+		const struct haste_ast_float_lit *lit = (const void*)node;
+		return tsprint("{f}", lit->value);
+	}
+	case ND_STRING_LIT: {
+		const struct haste_ast_string_lit *lit = (const void*)node;
+		return emit_string_global(ctx, lit->value.chars, lit->value.len);
+	}
+	default:
+		unimplemented();
+	}
+	return NULL;
 }
 
-static LLVMValueRef codegen_var(
+static const char *codegen_var(
 	struct codegen_context *ctx,
 	const struct haste_ast_var_decl *node,
 	bool is_global);
 
-static LLVMValueRef codegen_stmt(struct codegen_context *ctx, const struct haste_ast_node *node)
+static const char *codegen_stmt(struct codegen_context *ctx, const struct haste_ast_node *node)
 {
+	codegen_location(ctx->current_block_stream, node->location);
+
 	switch (node->kind) {
 	case ND_FUNC_DECL: unimplemented();
 	case ND_VAR_DECL:  return codegen_var(ctx, (void*)node, false);
-	default:           return codegen_expr(ctx, node);
+	default: {
+		const char *val = codegen_expr(ctx, node);
+		if (node->kind != ND_RETURN && node->kind != ND_BLOCK) {
+			sprintln(ctx->current_block_stream, "{s};", val);
+		}
+		return val;
 	}
+	}
+}
+
+static void codegen_location(stream_t stream, const struct location location)
+{
+	struct file_position pos = as_position(location);
+	sprintln(stream, "#line {u32} {s:#}", pos.line, get_source_file_path(location.src));
 }
 
 // ── Global declaration codegen ────────────────────────────────────
 
-static LLVMValueRef codegen_var(struct codegen_context *ctx, const struct haste_ast_var_decl *node, bool is_global)
+static const char *codegen_var(struct codegen_context *ctx, const struct haste_ast_var_decl *node, bool is_global)
 {
-	if (node->is_explicitly_comptime) return 0;
+	if (node->is_explicitly_comptime) return "";
 
 	const char *name = node->name.chars;
-	LLVMTypeRef type = llvm_type(ctx, node->base.type);
-	LLVMValueRef init = node->value != NULL
-		then codegen_expr(ctx, node->value)
-		otherwise LLVMConstNull(type);
+	const char *type = c_type(ctx, node->base.type);
+	const char *init = node->value != NULL ? codegen_expr(ctx, node->value) : "0";
 
-	LLVMValueRef symbol = {0};
 	if (is_global) {
-		symbol = LLVMAddGlobal(ctx->module, type, name);
-		LLVMSetInitializer(symbol, init);
-		LLVMSetGlobalConstant(symbol, node->is_constant);
+		codegen_location(ctx->globals_stream, node->base.location);
+		sprintln(ctx->globals_stream, "{s} {s} {s} = {s};", node->is_constant ? "const" : "", type, name, init);
 	} else {
-		LLVMValueRef alloca = LLVMBuildAlloca(ctx->builder, type, name);
-		LLVMBuildStore(ctx->builder, init, alloca);
-		struct local_entry local = push_local(ctx, name, alloca, type);
-		symbol = local.value;
+		sprintln(ctx->current_block_stream, "{s} {s} {s} = {s};", node->is_constant ? "const" : "", type, name, init);
 	}
 
-	return symbol;
+	return name;
 }
 
-static LLVMValueRef codegen_func_decl(struct codegen_context *ctx, const struct haste_ast_func_decl *node)
+static const char *codegen_func_decl(struct codegen_context *ctx, const struct haste_ast_func_decl *node)
 {
-	// Build function type: ret_type(param_types...)
-	LLVMTypeRef return_type = llvm_type(ctx, node->base.type);
-
-	// Count params
-	size_t param_count = 0;
-	leach (struct haste_ast_func_param, p, node->params) {
-		param_count += p->name_count;
-	}
-
-	LLVMTypeRef param_types[param_count > 0 ? param_count : 1];
-	size_t idx = 0;
-	leach (struct haste_ast_func_param, p, node->params) {
-		struct haste_type param_type = {0};
-		if (p->type != NULL and p->type->kind == ND_VALUE) {
-			struct haste_ast_value *val_node = (struct haste_ast_value*)p->type;
-			param_type = into_type(VAL_TYPE(val_node->value.type));
-		}
-		for (size_t i = 0; i < p->name_count; i++) {
-			param_types[idx++] = llvm_type(ctx, param_type);
-		}
-	}
-
-	LLVMTypeRef fn_type = LLVMFunctionType(return_type, param_types, (unsigned)param_count, false);
+	const char *return_type = c_type(ctx, node->base.type);
 	const char *name = node->name.chars;
-	LLVMValueRef fn = LLVMAddFunction(ctx->module, name, fn_type);
 
-	// Create entry basic block
-	LLVMBasicBlockRef entry = LLVMAppendBasicBlock(fn, "entry");
-	LLVMPositionBuilderAtEnd(ctx->builder, entry);
+	char *params_buf = NULL;
+	stream_t p_str = sdynmemopen(ctx->allocator, &params_buf);
 
-	// Save current function/restore on exit
-	LLVMValueRef prev_func = ctx->current_func;
-	ctx->current_func = fn;
-
-	// Store params in locals (alloca + store)
-	LLVMValueRef llvm_params = LLVMGetParam(fn, 0); // just for typing
-	discard llvm_params;
-	idx = 0;
+	size_t param_count = 0;
 	leach (struct haste_ast_func_param, p, node->params) {
 		struct haste_type param_type = {0};
 		if (p->type != NULL and p->type->kind == ND_VALUE) {
@@ -455,39 +412,43 @@ static LLVMValueRef codegen_func_decl(struct codegen_context *ctx, const struct 
 		} else if (p->type != NULL) {
 			param_type = p->type->type;
 		}
-		LLVMTypeRef llvm_param_type = llvm_type(ctx, param_type);
+		const char *c_param_type = c_type(ctx, param_type);
 		for (size_t i = 0; i < p->name_count; i++) {
-			const char *pname = p->names[i].chars;
-			LLVMValueRef alloca = LLVMBuildAlloca(ctx->builder, llvm_param_type, pname);
-			LLVMValueRef param_val = LLVMGetParam(fn, (unsigned)idx);
-			LLVMBuildStore(ctx->builder, param_val, alloca);
-			push_local(ctx, pname, alloca, llvm_param_type);
-			idx++;
+			if (param_count > 0) sprint(p_str, ", ");
+			sprint(p_str, "{s} {s}", c_param_type, p->names[i].chars);
+			param_count++;
 		}
 	}
+
+	char *sig = tsprint("{s} {s}({s})", return_type, name, param_count == 0 ? "void" : params_buf);
+    sclose(p_str);
+    // free(params_buf);
+
+	codegen_location(ctx->decls_stream, node->base.location);
+	sprintln(ctx->decls_stream, "{s};", sig);
 
 	// Generate body
-	LLVMValueRef body_val = NULL;
 	if (node->body != NULL) {
-		body_val = codegen_expr(ctx, node->body);
-	} else {
-		LLVMBuildRetVoid(ctx->builder);
-	}
+		codegen_location(ctx->impls_stream, node->base.location);
+		sprintln(ctx->impls_stream, "{s}\n{", sig);
 
-	// If the function's last instruction is not a terminator, add default return
-	LLVMBasicBlockRef current_block = LLVMGetInsertBlock(ctx->builder);
-	if (current_block != NULL and LLVMGetBasicBlockTerminator(current_block) == NULL) {
+		char *body_buf = NULL;
+		stream_t prev = ctx->current_block_stream;
+		ctx->current_block_stream = sdynmemopen(ctx->allocator, &body_buf);
+
+		const char *body_val = codegen_expr(ctx, node->body);
+		
 		if (body_val != NULL) {
-			LLVMBuildRet(ctx->builder, body_val);
-		} else if (LLVMGetReturnType(fn_type) == t_void(ctx)) {
-			LLVMBuildRetVoid(ctx->builder);
-		} else {
-			LLVMBuildRet(ctx->builder, LLVMConstNull(return_type));
+			sprintln(ctx->current_block_stream, "return {s};", body_val);
 		}
+
+		sprintln(ctx->impls_stream, "{s}}", body_buf);
+
+		sclose(ctx->current_block_stream);
+		ctx->current_block_stream = prev;
 	}
 
-	ctx->current_func = prev_func;
-	return fn;
+	return name;
 }
 
 static Error codegen_global_node(struct codegen_context *ctx, const struct haste_ast_node *node)
@@ -514,34 +475,47 @@ Error codegen(
 	const char *output_path,
 	bool dump_to_stderr)
 {
-	const char *path = get_source_file_path(src);
+	struct codegen_context ctx = {0};
+	ctx.allocator = allocator;
 
-	LLVMContextRef llvm_ctx = LLVMContextCreate();
-	LLVMBuilderRef builder = LLVMCreateBuilder();
-	LLVMModuleRef module = LLVMModuleCreateWithNameInContext(path, llvm_ctx);
+	char *structs_buf = NULL;
+	char *globals_buf = NULL;
+	char *decls_buf   = NULL;
+	char *impls_buf   = NULL;
 
-	struct codegen_context ctx = {
-		.llvm_ctx = llvm_ctx,
-		.builder = builder,
-		.module = module,
-		.allocator = allocator,
-	};
+	ctx.structs_stream = sdynmemopen(allocator, &structs_buf);
+	ctx.globals_stream = sdynmemopen(allocator, &globals_buf);
+	ctx.decls_stream   = sdynmemopen(allocator, &decls_buf);
+	ctx.impls_stream   = sdynmemopen(allocator, &impls_buf);
 
 	leach (struct haste_ast_node, node, get_source_file_ast(src)) {
 		codegen_global_node(&ctx, node);
 	}
 
-	if (dump_to_stderr) {
-		LLVMDumpModule(ctx.module);
-	} else if (output_path) {
-		char *err_msg = NULL;
-		if (LLVMPrintModuleToFile(ctx.module, output_path, &err_msg)) {
-			fprintf(stderr, "error: failed to write LLVM IR to '%s': %s\n", output_path, err_msg);
-			LLVMDisposeMessage(err_msg);
-			context_deinit(&ctx);
-			return ERROR;
-		}
+	stream_t out = {0};
+	if (output_path) {
+		out = sopen(output_path, "w");
+	} else if (dump_to_stderr) {
+		out = serr;
+	} else {
+		out = sout;
 	}
+
+	sprintln(out, "#include <stdint.h>\n");
+	sprintln(out, "/* Struct Defs */\n{s}", structs_buf);
+	sprintln(out, "/* Globals */\n{s}", globals_buf);
+	sprintln(out, "/* Function Decls */\n{s}", decls_buf);
+	sprintln(out, "/* Function Impls */\n{s}", impls_buf);
+
+	if (output_path) {
+		sclose(out);
+	}
+
+	/* free(structs_buf); */
+	/* free(globals_buf); */
+	/* free(decls_buf); */
+	/* free(impls_buf); */
 	context_deinit(&ctx);
+
 	return OK;
 }

@@ -1,5 +1,8 @@
 #include "haste.h"
 #include "my_common.h"
+#include "my_stream.h"
+#include <__stddef_unreachable.h>
+#include <stdio.h>
 
 
 #define IS_UNKNOWN(type) \
@@ -27,37 +30,37 @@ struct haste_value into_value(struct haste_type type)
 	return type.value;
 }
 
-static struct haste_value make_struct_default(struct Allocator alloc, struct haste_type type, bool force_all)
+static struct haste_value make_struct_default(struct intern_pool *pool, struct haste_type type, bool force_all)
 {
 	struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
-	struct haste_struct_object *so = (void*)create_struct(alloc, st);
+	struct haste_struct_object *so = (void*)create_struct(pool->arena, st);
 	for (size_t i = 0; i < st->len; i += 1) {
 		if (force_all or IS_NONE(so->fields[i])) {
-			so->fields[i] = default_for_type(alloc, st->items[i].type);
+			so->fields[i] = default_for_type(pool, st->items[i].type);
 		}
 	}
-	return VAL_OBJ(AS_TYPEID(type), so);
+	return VAL_OBJ(AS_TYPE_INFO(type), so);
 }
 
-struct haste_value zero_for_type(struct Allocator alloc, struct haste_type to)
+struct haste_value zero_for_type(struct intern_pool *pool, struct haste_type to)
 {
 	if (IS_STRUCT_TYPE(to))
-		return make_struct_default(alloc, to, true);
-	return default_for_type(alloc, to);
+		return make_struct_default(pool, to, true);
+	return default_for_type(pool, to);
 }
 
-struct haste_value default_for_type(struct Allocator alloc, struct haste_type type)
+struct haste_value default_for_type(struct intern_pool *pool, struct haste_type type)
 {
-	if (type_is_integer(type)) return VAL_SCALAR(AS_TYPEID(type), .integer = 0);
-	if (type_is_float(type))   return VAL_SCALAR(AS_TYPEID(type), .floating = 0.0f);
+	if (type_is_integer(type)) return VAL_SCALAR(AS_TYPE_INFO(type), .integer = 0);
+	if (type_is_float(type))   return VAL_SCALAR(AS_TYPE_INFO(type), .floating = 0.0f);
 	if (type_equal(type, ty_cstr))
-		return VAL_OBJ(AS_TYPEID(type), &_default_empty_string);
+		return VAL_OBJ(AS_TYPE_INFO(type), &_default_empty_string);
 	if (IS_STRUCT_TYPE(type))
-		return make_struct_default(alloc, type, false);
+		return make_struct_default(pool, type, false);
 	unreachable();
 }
 
-ssize_t find_named_field(const struct haste_type tp, const char *name)
+ptrdiff_t find_named_field(const struct haste_type tp, const char *name)
 {
 	if (not IS_STRUCT_TYPE(tp) and not IS_AUTO_STRUCT_TYPE(tp)) {
 		return -1;
@@ -75,42 +78,46 @@ ssize_t find_named_field(const struct haste_type tp, const char *name)
 
 struct haste_type typeof_value(const struct haste_value value)
 {
-	switch (value.kind) {
-	case HASTE_VL_NONE:
+	if (IS_NONE(value)) {
 		unreachable();
-	case HASTE_VL_BAD:     return into_type(VAL_BAD);
-	case HASTE_VL_ZERO:    return ty_zero;
-	case HASTE_VL_UNINIT:  return ty_unknown;
-	case HASTE_VL_RUNTIME: return value.runtime->type;
-	case HASTE_VL_TYPE:
-	case HASTE_VL_SCALAR:
-	case HASTE_VL_OBJ:
-		return into_type(VAL_TYPE(value.type_id));
 	}
-	unreachable();
+	if (IS_BAD(value)) {
+		return into_type(VAL_BAD);
+	}
+	return into_type(VAL_TYPE(value.type_info));
+	/* switch (value.kind) { */
+	/* case HASTE_VL_NONE: */
+	/* 	unreachable(); */
+	/* case HASTE_VL_BAD:     return into_type(VAL_BAD); */
+	/* case HASTE_VL_ZERO:    return ty_zero; */
+	/* case HASTE_VL_UNINIT:  return ty_unknown; */
+	/* case HASTE_VL_RUNTIME: return value.runtime->type; */
+	/* case HASTE_VL_TYPE: */
+	/* case HASTE_VL_SCALAR: */
+	/* case HASTE_VL_OBJ: */
+	/* 	return into_type(VAL_TYPE(value.type_info)); */
+	/* } */
+	/* unreachable(); */
 }
 
-struct haste_value make_value(struct Allocator alloc, const struct haste_type type)
+struct haste_value make_value(struct intern_pool *pool, const struct haste_type type)
 {
 	struct haste_type_info *type_info = AS_TYPE_INFO(type);
 
 	if (type_info->kind == HASTE_TY_STRUCT
 		or type_info->kind == HASTE_TY_AUTO_STRUCT) {
 		struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
-		struct haste_struct_object *so = (void*)create_struct(alloc, st);
-		return VAL_OBJ(AS_TYPEID(type), so);
+		struct haste_struct_object *so = (void*)create_struct(pool->arena, st);
+		return VAL_OBJ(AS_TYPE_INFO(type), so);
 	}
 
-	return default_for_type(alloc, type);
+	return default_for_type(pool, type);
 }
 
 bool type_equal(const struct haste_type v1,
                 const struct haste_type v2)
 {
-	const struct haste_type_info *t1 = AS_TYPE_INFO(v1);
-	const struct haste_type_info *t2 = AS_TYPE_INFO(v2);
-
-	return t1->pool_id == t2->pool_id;
+	return v1.value.type == v2.value.type;
 }
 
 uint64_t type_hash(const struct haste_type t)
@@ -122,12 +129,12 @@ uint64_t type_hash(const struct haste_type t)
 		for (const char *p = ot->name; *p; p += 1)
 			h = h * 31 + (unsigned char)*p;
 
-	if (ot->kind == HASTE_TY_STRUCT) {
-		const struct haste_struct_type_info *st = (const struct haste_struct_type_info *)ot;
+	if (ot->kind == HASTE_TY_STRUCT || ot->kind == HASTE_TY_AUTO_STRUCT) {
+		const struct haste_struct_type_info *st = &ot->structure;
 		for (size_t i = 0; i < st->len; i += 1) {
 			for (const char *p = st->items[i].name; *p; p += 1)
 				h = h * 31 + (unsigned char)*p;
-			h = h * 31 + (uint64_t)st->items[i].type.value.kind;
+			h = h * 31 + (uint64_t)(uintptr_t)st->items[i].type.value.type;
 		}
 	}
 
@@ -145,8 +152,6 @@ struct haste_type untyped_to_typed(struct haste_type type)
 	if (type_equal(type, ty_untyped_float))     return ty_float;
 	if (type_equal(type, ty_untyped_string))    return ty_string;
 	if (IS_ZERO_TYPE(type))              return ty_int;
-	if (HASTE_TID_IS_RESERVED(AS_TYPEID(type))) return type;
-
 	return type;
 }
 

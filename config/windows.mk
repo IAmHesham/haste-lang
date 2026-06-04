@@ -13,14 +13,8 @@ ifneq (,$(findstring cl,$(notdir $(CC))))
 else
   # MinGW GCC
   STD := $(shell echo 'int main(){}' | $(CC) -std=c23 -x c - -o nul 2>/dev/null && echo c23 || echo c17)
-  LLVM_CONFIG := $(shell command -v llvm-config 2>/dev/null)
-  ifneq ($(LLVM_CONFIG),)
-    CFLAGS   := -std=$(STD) -Iinclude/ $(shell $(LLVM_CONFIG) --cflags)
-    LDFLAGS  := $(shell $(LLVM_CONFIG) --ldflags) -lstdc++ $(shell $(LLVM_CONFIG) --libs core)
-  else
-    CFLAGS   := -std=$(STD) -Iinclude/
-    LDFLAGS  := -lLLVM
-  endif
+  CFLAGS   := -std=$(STD) -Iinclude/
+  LDFLAGS  := -lstdc++
   DEBUG_FLAGS    := -g -Og -DDEBUG -Wall -Wextra -Wpedantic -Werror -Wno-unused-function
   RELEASE_FLAGS  := -O3
   EXE      := haste.exe

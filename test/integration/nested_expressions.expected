@@ -1,6 +1,0 @@
-; ModuleID = 'test/integration/nested_expressions.haste'
-source_filename = "test/integration/nested_expressions.haste"
-
-@a = constant i32 90
-@b = constant i32 10
-@c = constant i32 -10

@@ -1,3 +1,0 @@
-const a = b + 1;
-const b = c * 2;
-const c: float = 2;

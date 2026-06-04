@@ -1,4 +1,0 @@
-; ModuleID = 'test/integration/grouping.haste'
-source_filename = "test/integration/grouping.haste"
-
-@a = constant i32 90

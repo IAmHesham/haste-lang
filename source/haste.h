@@ -11,6 +11,7 @@
 #include "my_array.h"
 #include "my_managed_array.h"
 #include "my_stream.h"
+#include <stddef.h>
 #include <stdint.h>
 
 #define SAFE_COUNT(n) ((n) > 0 ? (n) : (size_t)1)
@@ -281,7 +282,13 @@ struct location {
 	source_file_id src;
 };
 
+struct file_position {
+	uint32_t line, column;
+	source_file_id src;
+};
+
 #define location(...) ((struct location) { __VA_ARGS__ })
+#define file_position(...) ((struct file_position) { __VA_ARGS__ })
 #define string(...) ((struct string) { __VA_ARGS__ })
 
 #define as_string(...) \
@@ -305,6 +312,7 @@ struct string token_kind_as_string(enum token_kind kind);
 const char *token_kind_name(enum token_kind kind);
 
 struct location as_location(struct token token);
+struct file_position as_position(struct location location);
 
 struct location location_conjoin(
     struct location a,
@@ -322,64 +330,74 @@ int display_width(const char *p, int len, source_file_id src);
 //
 // intern.c
 //
-struct intern_table {
+struct intern_pool {
 	struct Allocator arena;
 	struct Allocator allocator;
-	size_t cap, len;
-	struct intern_entry {
-		uint64_t hash;
-		const char *str;
-		size_t len;
-	} *entries;
+
+	struct intern_pool_strings {
+		size_t cap, len;
+
+		struct intern_pool_string_entries {
+			uint64_t hash;
+			const char *str;
+			size_t len;
+		} *items;
+	} strings;
+
+	struct intern_pool_types {
+		size_t cap, len;
+
+		struct intern_pool_types_entries {
+			uint64_t hash;
+			struct haste_type_info *info;
+		} *items;
+	} types;
+
+	struct intern_pool_nodes {
+		size_t cap, len;
+
+		struct intern_pool_nodes_entries {
+			uint32_t hash;
+			struct haste_ast_node *node;
+		} *items;
+	} nodes;
+
+	struct intern_pool_objects {
+		size_t cap, len;
+
+		struct intern_pool_objects_entries {
+			uint64_t hash;
+			struct haste_type_info *type_info;
+			struct haste_object *obj;
+		} *items;
+	} objects;
 };
 
-void init_intern_table(struct Allocator allocator, struct Allocator arena);
-void deinit_intern_table(void);
+struct intern_pool init_intern_pool(struct Allocator allocator, struct Allocator arena);
+void deinit_intern_pool(struct intern_pool *pool);
 
-const char *intern_str(const char *start, size_t len);
-// const char *intern_token(struct token token);
-const char *intern_cstr(const char *str);
+const char *intern_str(struct intern_pool *pool, const char *start, size_t len);
+const char *intern_cstr(struct intern_pool *pool, const char *str);
 
-//
-// type pool
-//
-typedef uint32_t TypeID;
-struct haste_type_info;
-
-struct type_pool {
-	struct Allocator allocator;
-	struct {
-		size_t len, cap;
-		struct haste_type_info **items;
-	} chunks;
-	uint32_t len;
-};
-
-#define STANDARD_BITWIDTH_LIMIT       128
-#define HASTE_TID_RESERVED_INT_BASE   0
-#define HASTE_TID_RESERVED_UINT_BASE  129
-#define HASTE_TID_TOTAL_RESERVED      ( HASTE_TID_RESERVED_UINT_BASE + 129 )
-#define HASTE_TID_IS_RESERVED(id)     ((id) <= HASTE_TID_TOTAL_RESERVED)
-
-extern struct type_pool g_type_pool;
-
-TypeID type_pool_add(struct haste_type_info type);
-struct haste_type_info *type_pool_get(TypeID id);
-void type_pool_set_name(TypeID id, const char *name);
-struct haste_value type_get_int(uint16_t bits, bool is_signed);
+struct haste_ast_node *intern_node(struct intern_pool *pool, struct haste_ast_node *node);
+struct haste_type_info *intern_type_info(struct intern_pool *pool, const struct haste_type_info *info);
+struct haste_type_info *intern_type_info_unique(struct intern_pool *pool, const struct haste_type_info *info);
+struct haste_value type_get_int(struct intern_pool *pool, uint16_t bits, bool is_signed);
 
 //
 // value.c
 //
+#  define STANDARD_BITWIDTH_LIMIT       128
+
 #  define VAL_NONE                  ((struct haste_value) { .kind = HASTE_VL_NONE })
 #  define VAL_BAD                   ((struct haste_value) { .kind = HASTE_VL_BAD  })
-#  define VAL_ZERO                  ((struct haste_value) { .kind = HASTE_VL_ZERO })
-#  define VAL_UNINIT                ((struct haste_value) { .kind = HASTE_VL_UNINIT })
+#  define VAL_ZERO                  ((struct haste_value) { .kind = HASTE_VL_ZERO, .type_info = AS_TYPE_INFO(ty_zero) })
+#  define VAL_UNINIT                ((struct haste_value) { .kind = HASTE_VL_UNINIT, .type_info = AS_TYPE_INFO(ty_unknown) })
 #  define VAL_BAD_ERROR(err_)       ((struct haste_value) { .kind = HASTE_VL_BAD, .error_code = (err_) })
-#  define VAL_SCALAR(tid, ...)      ((struct haste_value) { .kind = HASTE_VL_SCALAR, .type_id = (tid), __VA_ARGS__ })
+#  define VAL_SCALAR(ti, ...)       ((struct haste_value) { .kind = HASTE_VL_SCALAR, .type_info = (ti), __VA_ARGS__ })
 #  define VAL_RUNTIME(...)          ((struct haste_value) { .kind = HASTE_VL_RUNTIME, .runtime = (__VA_ARGS__) })
-#  define VAL_TYPE(...)             ((struct haste_value) { .kind = HASTE_VL_TYPE, .type_id = AS_TYPEID(ty_type), .type = (__VA_ARGS__) })
-#  define VAL_OBJ(tid, p)           ((struct haste_value) { .kind = HASTE_VL_OBJ, .type_id = (tid), .obj = (struct haste_object*)(void*)(p) })
+#  define VAL_TYPE(ti)              ((struct haste_value) { .kind = HASTE_VL_TYPE, .type_info = (ty_type.value.type_info), .type = (ti) })
+#  define VAL_OBJ(ti, p)            ((struct haste_value) { .kind = HASTE_VL_OBJ, .type_info = (ti), .obj = (struct haste_object*)(void*)(p) })
 
 #  define TYPE_INFO(...)             ((struct haste_type_info) { __VA_ARGS__ })
 #  define STRUCT_TYPE_INFO(...)      ((struct haste_struct_type_info) { .kind = HASTE_TY_STRUCT, __VA_ARGS__ })
@@ -396,15 +414,14 @@ struct haste_value type_get_int(uint16_t bits, bool is_signed);
 #  define IS_TYPE(...)              ((__VA_ARGS__).kind == HASTE_VL_TYPE)
 #  define IS_LVALUE(...)            ((__VA_ARGS__).is_lvalue)
 
-#  define IS_STRUCT_TYPE(...)       ((AS_TYPE_INFO(__VA_ARGS__)->kind == HASTE_TY_STRUCT))
-#  define IS_AUTO_STRUCT_TYPE(...)  ((AS_TYPE_INFO(__VA_ARGS__)->kind == HASTE_TY_AUTO_STRUCT))
+#  define IS_STRUCT_TYPE(v)         ((AS_TYPE_INFO(v)->kind == HASTE_TY_STRUCT))
+#  define IS_AUTO_STRUCT_TYPE(v)    ((AS_TYPE_INFO(v)->kind == HASTE_TY_AUTO_STRUCT))
 
 #  define IS_OBJ(...)               ((__VA_ARGS__).kind == HASTE_VL_OBJ)
 #  define IS_STRUCT(...)            ((IS_OBJ(__VA_ARGS__)) and ((__VA_ARGS__).obj->kind == HASTE_OBJ_STRUCT))
 
 #  define AS_OBJ(v)                 ((v).obj)
-#  define AS_TYPEID(v)              ((v).value.type)
-#  define AS_TYPE_INFO(v)           ((type_pool_get(AS_TYPEID(v))))
+#  define AS_TYPE_INFO(v)           ((v).value.type)
 #  define AS_STRUCT_TYPE_INFO(v)    ((&AS_TYPE_INFO(v)->structure))
 
 #  define AS_STRUCT(v)              ((OAS_STRUCT(AS_OBJ(v))))
@@ -451,13 +468,13 @@ struct haste_value {
 	enum haste_value_kind kind : 6;
 	bool is_explicitly_comptime : 1;
 	bool is_lvalue : 1;
-	TypeID type_id;
+	struct haste_type_info *type_info;
 
 	union {
 		enum haste_value_error error_code;
 		int64_t integer;
 		double floating;
-		TypeID type;
+		struct haste_type_info *type;
 		struct haste_ast_node *runtime;
 		struct haste_object *obj;
 	};
@@ -481,16 +498,14 @@ struct haste_struct_object {
 	struct haste_value fields[];
 };
 
-// TODO: Move the type pool away from value.c
-
 struct haste_type;
 
-void setup_builtins(struct Allocator allocator);
+void setup_builtins(struct intern_pool *pool);
 
 bool value_equal(struct haste_value a, struct haste_value b);
 
 struct haste_value value_assign(
-	struct Allocator alloc,
+	struct intern_pool *pool,
 	struct haste_value *lvalue,
 	struct haste_value rvalue);
 
@@ -520,11 +535,11 @@ struct haste_value struct_get_field_by_name(const struct haste_value value,
 											const char *name);
 struct haste_value struct_get_field_by_index(const struct haste_value value,
 											 const size_t idx);
-struct haste_value struct_set_field_by_name(struct Allocator,
+struct haste_value struct_set_field_by_name(struct intern_pool *pool,
 											struct haste_value *value,
 											const char *name,
 											const struct haste_value new_value);
-struct haste_value struct_set_field_by_index(struct Allocator,
+struct haste_value struct_set_field_by_index(struct intern_pool *pool,
 											 struct haste_value *value,
 											 const size_t idx,
 											 const struct haste_value new_value);
@@ -560,7 +575,6 @@ extern struct haste_type ty_cstr;
 extern struct haste_type ty_usize;
 
 struct haste_type_info {
-	TypeID pool_id;
 	enum {
 		HASTE_TY_ZERO,
 		HASTE_TY_UNKNOWN,
@@ -610,14 +624,12 @@ struct haste_type into_type(struct haste_value value);
 struct haste_value into_value(struct haste_type type);
 
 bool type_is_builtin(struct haste_type ty);
-bool is_newly_created_type(struct haste_type ty);
-void reset_new_type_counter(void);
 
-ssize_t find_named_field(const struct haste_type tp, const char *name);
+ptrdiff_t find_named_field(const struct haste_type tp, const char *name);
 
 struct haste_type typeof_value(const struct haste_value value);
 
-struct haste_value   make_value(struct Allocator alloc, const struct haste_type type);
+struct haste_value   make_value(struct intern_pool *pool, const struct haste_type type);
 struct haste_object *create_struct(struct Allocator alloc, struct haste_struct_type_info *st);
 struct haste_object *create_string(struct Allocator alloc, const char *str, size_t len);
 
@@ -633,11 +645,11 @@ struct haste_object *create_string(struct Allocator alloc, const char *str, size
   * @param value can be any value
   * @returns `value' casted to the type `to'. upon failing it will return `VAL_BAD'
   */
-struct haste_value value_cast(struct Allocator alloc, const struct haste_type to, const struct haste_value value);
-struct haste_value value_implicit_cast(struct Allocator alloc, const struct haste_type to, const struct haste_value value);
-struct haste_value value_coerce(struct Allocator alloc, const struct haste_type to, const struct haste_value value);
-struct haste_value zero_for_type(struct Allocator alloc, struct haste_type to);
-struct haste_value default_for_type(struct Allocator alloc, struct haste_type to);
+struct haste_value value_cast(struct intern_pool *pool, const struct haste_type to, const struct haste_value value);
+struct haste_value value_implicit_cast(struct intern_pool *pool, const struct haste_type to, const struct haste_value value);
+struct haste_value value_coerce(struct intern_pool *pool, const struct haste_type to, const struct haste_value value);
+struct haste_value zero_for_type(struct intern_pool *pool, struct haste_type to);
+struct haste_value default_for_type(struct intern_pool *pool, struct haste_type to);
 
 bool type_equal(const struct haste_type t1,
                 const struct haste_type t2);
@@ -860,6 +872,7 @@ struct haste_ast_func_call { // ND_FUNC_CALL
 struct haste_ast_block { // ND_BLOCK
 	struct haste_ast_node base;
 	struct haste_ast_node *stmts;
+	bool returning : 1;
 };
 
 struct haste_ast_return { // ND_RETURN
@@ -868,7 +881,7 @@ struct haste_ast_return { // ND_RETURN
 };
 
 void *node_into_value(
-	struct Allocator allocator,
+	struct intern_pool *pool,
 	void *nd,
 	struct haste_value value);
 int print_haste_ast(stream_t file, const struct haste_ast_node *root);
@@ -887,20 +900,13 @@ void f_vreport_at_location(const char *kind, struct location location, const cha
 //
 // parse.c
 //
-Error parse(struct Allocator allocator, const source_file_id src);
+Error parse(struct intern_pool *pool, const source_file_id src);
 
 //
 // analysis.c
 //
 
-Error analyze_one_node(
-	struct Allocator allocator,
-	struct Allocator arena_allocator,
-	struct haste_ast_node *node,
-	struct haste_value *out);
-Error analyze(struct Allocator allocator,
-              struct Allocator arena_allocator,
-              const source_file_id src);
+Error analyze(struct intern_pool *pool, const source_file_id src);
 //
 // codegen.c
 //

@@ -1,5 +1,0 @@
-; ModuleID = 'test/integration/distinct_type_cast.haste'
-source_filename = "test/integration/distinct_type_cast.haste"
-
-@d = constant i32 100
-@t = constant i32 100

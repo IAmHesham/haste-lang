@@ -1,3 +1,0 @@
-func double(x: int): int do
-	return x + x;
-end

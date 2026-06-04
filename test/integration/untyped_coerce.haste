@@ -1,3 +1,0 @@
-const a: int = 42;
-const b: float = 3.14;
-const c: float = 10;

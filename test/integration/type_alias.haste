@@ -1,3 +1,0 @@
-const Number = int;
-const a: Number = 42;
-const b = cast[Number]3.14;

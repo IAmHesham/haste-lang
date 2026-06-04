@@ -13,7 +13,7 @@ static int print_usage(stream_t f, const char *prog)
 	amount += sprintln(f, "  --tokens      Dump token stream and exit");
 	amount += sprintln(f, "  --ast         Dump AST after parsing/hoisting and exit");
 	amount += sprintln(f, "  --sema        Dump semantic analysis result and exit");
-	amount += sprintln(f, "  --llvm        Dump LLVM IR and exit");
+	amount += sprintln(f, "  --c           Dump C code and exit");
 	amount += sprintln(f, "  --dump        Write dump output to stderr instead of a file");
 	amount += sprintln(f, "  -o <file>     Write dump output to <file>");
 	amount += sprintln(f, "  --measure     Show timing report for each compiler phase");
@@ -37,7 +37,7 @@ Error parse_arguments(const int argc, const char *argv[argc])
 			g_options.dump_ast = true;
 		} else if (strcmp(argv[i], "--sema") == 0) {
 			g_options.dump_sema = true;
-		} else if (strcmp(argv[i], "--llvm") == 0) {
+		} else if (strcmp(argv[i], "--c") == 0) {
 			g_options.dump_llvm = true;
 		} else if (strcmp(argv[i], "--measure") == 0) {
 			g_options.do_measure = true;

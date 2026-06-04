@@ -65,6 +65,36 @@ struct location as_location(struct token token)
 		.src = token.src);
 }
 
+static uint32_t get_line_number(const char *content, const char *pos)
+{
+	uint32_t line = 1;
+	for (const char *cur = pos; cur > content; cur -= 1) {
+		if (*cur == '\n') {
+			line += 1;
+		}
+	}
+
+	return line;
+}
+
+static uint32_t get_column_number(source_file_id src, const char *content, const char *pos)
+{
+	const char *line_start = pos;
+	while (line_start > content and line_start[-1] != '\n') {
+		line_start -= 1;
+	}
+	return display_width(line_start, (int)(pos - line_start), src) + 1;
+}
+
+struct file_position as_position(struct location location)
+{
+	const char *content = get_source_file_content(location.src);
+	return file_position(
+		.line = get_line_number(content, content + location.start),
+		.column = get_column_number(location.src, content, content + location.start),
+		.src = location.src);
+}
+
 struct location location_conjoin(
     struct location a,
     struct location b)

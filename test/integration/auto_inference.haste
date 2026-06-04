@@ -1,3 +1,0 @@
-const a: auto = 42;
-const b: auto = 3.14;
-const c: auto = "hello";

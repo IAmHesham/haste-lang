@@ -1,3 +1,0 @@
-const Empty = struct {};
-const e = Empty{};
-const e2: Empty;

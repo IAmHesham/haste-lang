@@ -1,3 +1,6 @@
 home/hesham/Documents/Projects/haste-lang/test/errors/struct_field_not_a_type.haste:2:8: Error: Expected a type for field, got 'untyped_int' instead.
     2 | x: 42;
            ^ 
+home/hesham/Documents/Projects/haste-lang/test/errors/struct_field_not_a_type.haste:2:5: Error: Cannot infer type for field 'x' without a default value.
+    2 | x: 42;
+        ^ 

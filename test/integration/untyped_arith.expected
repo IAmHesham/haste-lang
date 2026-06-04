@@ -1,7 +1,0 @@
-; ModuleID = 'test/integration/untyped_arith.haste'
-source_filename = "test/integration/untyped_arith.haste"
-
-@a = constant i32 30
-@b = constant i32 25
-@c = constant i32 42
-@d = constant i32 25

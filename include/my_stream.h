@@ -1146,10 +1146,11 @@ stream_t sopen(const char *path, const char *mode)
 int sclose(stream_t stream)
 {
 	sflush(stream);
+	int result = stream.vtable->close(stream.data);
 	if (stream.vtable != &file_vtable_) {
 		free(stream.data);
 	}
-	return stream.vtable->close(stream.data);
+	return result;
 }
 
 int vprint(const char *restrict fmt, va_list args)
