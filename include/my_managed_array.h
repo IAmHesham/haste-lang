@@ -42,12 +42,12 @@
 		(array_).cap = 0; \
 	} while (0)
 
-#define marrpush(array_, item_) \
+#define marrpush(array_, ...) \
 	do { \
 		if ((array_).len >= (array_).cap) { \
 			marrgrow((array_)); \
 		} \
-		(array_).items[(array_).len++] = (item_);	\
+		(array_).items[(array_).len++] = (__VA_ARGS__);	\
 	} while (0)
 
 #define marrgrow(array_) \

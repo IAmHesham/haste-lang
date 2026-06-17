@@ -396,8 +396,8 @@ static bool type_info_equal(const struct haste_type_info *a, const struct haste_
 			assert(fb->name != NULL);
 			if (strcmp(fa->name, fb->name) != 0) return false;
 			if (fa->type.value.type != fb->type.value.type) return false;
-			if (fa->has_default != fb->has_default) return false;
-			if (fa->has_default && !value_equal(fa->default_value, fb->default_value)) return false;
+			if (IS_NONE(fa->default_value) != IS_NONE(fb->default_value)) return false;
+			if (not IS_NONE(fa->default_value) && !value_equal(fa->default_value, fb->default_value)) return false;
 		}
 	}
 	return true;

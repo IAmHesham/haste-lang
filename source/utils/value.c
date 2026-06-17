@@ -4,9 +4,19 @@
 #include "my_common.h"
 #include "my_stream.h"
 #include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+
+#define create_node(pool_, T_, ...) \
+	(void*)_create_node((pool_), &(T_) { __VA_ARGS__ })
+
+inline static void *_create_node(struct intern_pool *pool, void *value)
+{
+	return intern_node(pool, value);
+}
 
 struct haste_type ty_int            = {0};
 struct haste_type ty_uint           = {0};
@@ -415,8 +425,9 @@ struct haste_value value_cast(
 
 struct haste_value value_assign(struct intern_pool *pool, struct haste_value *lvalue, struct haste_value rvalue)
 {
-	if (not lvalue->is_lvalue)
+	if (not lvalue->is_lvalue) {
 		return VAL_BAD_ERROR(ERR_INVALID_ASSIGNMET);
+	}
 
 	struct haste_type lhs_type = typeof_value(*lvalue);
 
@@ -468,7 +479,7 @@ struct haste_object *create_struct(struct Allocator alloc, struct haste_struct_t
 
 	iarreach (i, *st) {
 		struct haste_struct_field field = st->items[i];
-		if (field.has_default) {
+		if (not IS_NONE(field.default_value)) {
 			so->fields[i] = field.default_value;
 		} else {
 			so->fields[i] = VAL_NONE;
@@ -488,6 +499,58 @@ struct haste_object *create_string(struct Allocator alloc, const char *str, size
 	so->len = len;
 	memcpy(so->data, str, so->len);
 	return (void*)so;
+}
+
+//
+// haste_value_builder
+//
+struct haste_value_builder value_builder(struct intern_pool *pool)
+{
+	return (struct haste_value_builder) {
+		.pool = pool,
+	};
+}
+
+void free_value_builder(struct haste_value_builder *builder)
+{
+	arrfree(builder->pool->allocator, *builder);
+}
+
+void value_builder_push(struct haste_value_builder *builder, struct haste_value value)
+{
+	arrpush(builder->pool->allocator, *builder, value);
+}
+
+void value_builder_set(struct haste_value_builder *builder, size_t index, struct haste_value value)
+{
+	if (index >= builder->cap) {
+		size_t old_cap = builder->cap;
+		size_t new_cap = old_cap ? old_cap : 8;
+		while (new_cap <= index) new_cap *= 2;
+		builder->items = xrecreate(builder->pool->allocator, old_cap * sizeof(struct haste_value), new_cap * sizeof(struct haste_value), builder->items);
+		builder->cap = new_cap;
+		memset(builder->items + old_cap, 0, (new_cap - old_cap) * sizeof(struct haste_value));
+	}
+	builder->items[index] = value;
+	if (index >= builder->len) builder->len = index + 1;
+}
+
+struct haste_value build_value(struct haste_value_builder *builder, struct haste_type type)
+{
+	struct haste_type_info *ti = AS_TYPE_INFO(type);
+	if (ti->kind == HASTE_TY_STRUCT || ti->kind == HASTE_TY_AUTO_STRUCT) {
+		struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
+		struct haste_struct_object *so = (void*)create_struct(builder->pool->arena, st);
+
+		for (size_t i = 0; i < builder->len && i < st->len; i++) {
+			if (not IS_NONE(builder->items[i])) {
+				so->fields[i] = builder->items[i];
+			}
+		}
+
+		return VAL_OBJ(ti, so);
+	}
+	unreachable();
 }
 
 static bool object_equal(struct haste_object *a, struct haste_object *b)
@@ -563,6 +626,46 @@ static struct haste_value require_struct_value(
 	*st = AS_STRUCT_TYPE_INFO(type);
 	*so = AS_STRUCT(*value);
 	return VAL_NONE;
+}
+
+struct haste_value value_access(
+	struct intern_pool *pool,
+	const struct haste_value value,
+	const struct string str)
+{
+	struct haste_type type = typeof_value(value);
+	if (not IS_STRUCT_TYPE(type)) return VAL_BAD_ERROR(ERR_NOT_A_STRUCT);
+	struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
+
+	if (IS_RUNTIME(value)) {
+		ssize_t idx = find_named_field(type, str.chars);
+		if (idx < 0) {
+			return VAL_BAD_ERROR(ERR_FIELD_DOESNT_EXIST);
+		}
+
+		struct haste_type field_type = st->items[idx].type;
+
+		struct haste_ast_node *node = create_node(
+			pool, struct haste_ast_access,
+			.base.kind = ND_ACCESS,
+			.base.type = field_type,
+			.base.analyzed = true,
+			.field_index = (size_t)idx);
+		struct haste_value result = VAL_RUNTIME((struct haste_ast_node*)node);
+		result.is_lvalue = value.is_lvalue;
+		result.type_info = AS_TYPE_INFO(field_type);
+		return result;
+	}
+
+	if (not IS_STRUCT(value)) {
+		return VAL_BAD_ERROR(ERR_NOT_A_STRUCT);
+	}
+
+	ssize_t idx = find_named_field(type, str.chars);
+	if (idx < 0) {
+		return VAL_BAD_ERROR(ERR_FIELD_DOESNT_EXIST);
+	}
+	return AS_STRUCT(value)->fields[(size_t)idx];
 }
 
 struct haste_value struct_get_field_by_name(

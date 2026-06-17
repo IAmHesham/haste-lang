@@ -127,9 +127,6 @@ int main(int argc, char *argv[argc])
 	struct intern_pool intern_table = init_intern_pool(c_allocator, arena_allocator);
 	setup_builtins(&intern_table);
 
-	// Sub-arena for analysis allocations (struct types, objects, strings)
-	struct Arena analysis_arena = Arena(c_allocator);
-
 	struct timer_list timers = {
 		.allocator = get_default_allocator(),
 	};
@@ -219,7 +216,6 @@ cleanup:
 	}
 	marrfree(timers);
 
-	arena_free(&analysis_arena);
 	deinit_intern_pool(&intern_table);
 	arena_free(&arena);
 	return exit_code;

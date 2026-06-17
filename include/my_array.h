@@ -38,12 +38,12 @@
 		(array__).cap = 0; \
 	} while (0)
 
-#define arrpush(allocator_, array__, item__) \
+#define arrpush(allocator_, array__, ...) \
 	do { \
 		if ((array__).len >= (array__).cap) { \
 			arrgrow((allocator_), (array__)); \
 		} \
-		(array__).items[(array__).len++] = (item__);	\
+		(array__).items[(array__).len++] = (__VA_ARGS__); \
 	} while (0)
 
 #define arrgrow(allocator_, array__) \

@@ -295,20 +295,27 @@ void *node_into_value(
 	struct haste_value value)
 {
 	struct haste_ast_node *node = nd;
-
-	struct haste_ast_node *new_node = intern_node(
-		pool, &(struct haste_ast_value){
-			.base.kind = ND_VALUE,
-			.base.type = typeof_value(value),
-			.value = value,
-		}.base);
-
-	if (node != NULL) {
-		new_node->location = node->location;
-		new_node->next = node->next;
+	if (nd == NULL) {
+		node = intern_node(
+			pool, &(struct haste_ast_value){
+				.base.kind = ND_VALUE,
+				.base.type = typeof_value(value),
+				.value = value,
+			}.base);
+		return node;
 	}
 
-	return new_node;
+	if (IS_RUNTIME(value)) {
+		value.runtime->location = node->location;
+		if (value.runtime->next == NULL) {
+			value.runtime->next = node->next;
+		}
+	}
+
+	node->kind = ND_VALUE;
+	node->type = typeof_value(value);
+	((struct haste_ast_value*)node)->value = value;
+	return node;
 }
 
 int print_haste_ast(stream_t file, const struct haste_ast_node *root)

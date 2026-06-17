@@ -1,7 +1,9 @@
 #include "haste.h"
+#include "my_array.h"
 #include "my_common.h"
 #include "my_stream.h"
 #include <__stddef_unreachable.h>
+#include <assert.h>
 #include <stdio.h>
 
 
@@ -58,6 +60,75 @@ struct haste_value default_for_type(struct intern_pool *pool, struct haste_type 
 	if (IS_STRUCT_TYPE(type))
 		return make_struct_default(pool, type, false);
 	unreachable();
+}
+
+struct haste_type_builder type_builder(
+	struct intern_pool *pool,
+	enum haste_compound_kind kind)
+{
+	return (struct haste_type_builder) {
+		.pool = pool,
+		.kind = kind,
+		.is_auto = false,
+	};
+}
+
+void free_type_builder(struct haste_type_builder *builder)
+{
+	arrfree(builder->pool->allocator, *builder);
+}
+
+struct haste_value add_field(
+	struct haste_type_builder *builder,
+	struct string name,
+	struct haste_type type,
+	struct haste_value default_value)
+{
+	if (builder->kind != HASTE_TYB_STRUCT) {
+		return VAL_BAD_ERROR(ERR_NOT_A_STRUCT_OR_TUPLE_OR_UNION);
+	}
+
+	// Check if the field already exists by a simple linear search
+	// NOTE: the amount of fields are usally small so a linear search
+	//       will not be slow
+	arreach (struct haste_struct_field, field, *builder) {
+		if (strcmp(field.name, name.chars) == 0) {
+			return VAL_BAD_ERROR(ERR_FIELD_DUPLICATION);
+		}
+	}
+
+	if (type_equal(type, ty_auto)) {
+		type = typeof_value(default_value);
+	}
+
+	type = untyped_to_typed(type);
+	default_value = value_coerce(builder->pool, type, default_value);
+
+	arrpush(builder->pool->allocator, *builder, (struct haste_struct_field){
+			.name = name.chars,
+			.type = type,
+			.default_value = default_value,
+		});
+
+	return VAL_NONE;
+}
+
+struct haste_type build_type(struct haste_type_builder *builder)
+{
+	struct haste_type_info type_info = {0};
+
+	// First we turn haste_type_builder into haste_type
+	switch (builder->kind) {
+	case HASTE_TYB_STRUCT:
+		type_info.kind = builder->is_auto ? HASTE_TY_AUTO_STRUCT : HASTE_TY_STRUCT;
+		type_info.name = NULL;
+		type_info.structure.items = builder->items;
+		type_info.structure.len = builder->len;
+		break;
+	}
+
+	struct haste_type_info *result = intern_type_info(builder->pool, &type_info);
+	return into_type(VAL_TYPE(result));
 }
 
 ptrdiff_t find_named_field(const struct haste_type tp, const char *name)

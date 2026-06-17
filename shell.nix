@@ -15,7 +15,7 @@ pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
 
   buildInputs = with pkgs; [
     libxml2
-    pkgsStatic.libxml2
+    pkgsimport Static.libxml2
 
     glibc
     glibc.static

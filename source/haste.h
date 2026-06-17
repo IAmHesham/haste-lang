@@ -182,13 +182,8 @@ enum token_kind {
 	TK_KW_VAR,       // "var"
 	TK_KW_STRUCT,    // "struct"
 	TK_KW_DISTINCT,  // "distinct"
-	TK_KW_FUNC,      // "func"
 	TK_KW_DO,        // "do"
 	TK_KW_END,       // "end"
-	TK_KW_RETURN,    // "return"
-	TK_KW_IF,        // "if"
-	TK_KW_THEN,      // "then"
-	TK_KW_ELSE,      // "else"
 
 	TK_SEMI_COLON,   // ";"
 
@@ -435,6 +430,8 @@ struct haste_value type_get_int(struct intern_pool *pool, uint16_t bits, bool is
 enum haste_value_error {
 	ERR_ANY, /* any error and any propagated error */
 
+	ERR_NOT_TYPE,
+
 	/* ARITHMATICS */
 	ERR_INCOMPATIBLE_ARITH_TYPES,
 	// TODO: implement underflow checks
@@ -451,6 +448,10 @@ enum haste_value_error {
 	/* STRUCTS */
 	ERR_NOT_A_STRUCT,
 	ERR_FIELD_DOESNT_EXIST,
+
+	/* Type Builder */
+	ERR_NOT_A_STRUCT_OR_TUPLE_OR_UNION,
+	ERR_FIELD_DUPLICATION,
 };
 
 enum haste_value_kind {
@@ -528,8 +529,12 @@ bool is_comptime_known(const struct haste_value v);
 	const char *: struct_has_field_name \
 	char *: struct_has_field_name \
 	struct token: struct_has_field_token) (v_, (__VA_ARGS__)))
-
 bool struct_has_field_name(const struct haste_value value, const char *name);
+
+struct haste_value value_access(
+	struct intern_pool *pool,
+	const struct haste_value value,
+	const struct string str);
 
 struct haste_value struct_get_field_by_name(const struct haste_value value,
 											const char *name);
@@ -558,6 +563,45 @@ int print_value(stream_t stream, const struct haste_value value);
 struct haste_type {
 	struct haste_value value;
 };
+
+enum haste_compound_kind {
+    HASTE_TYB_STRUCT,
+    // HASTE_TYB_TUPLE,
+    // HASTE_TYB_UNION,
+    // HASTE_TYB_SLICE,
+    // HASTE_TYB_ARRAY,
+    // HASTE_TYB_POINTER,
+    // HASTE_TYB_FUNCTION,
+};
+
+struct haste_type_builder {
+    struct intern_pool *pool;
+    enum haste_compound_kind kind;
+    bool is_auto;
+
+    size_t len, cap;
+    struct haste_struct_field *items;
+
+    // atom-shaped state
+    // struct haste_type element;      // slice, array, pointer
+    // struct haste_value length;      // array
+    // struct haste_type return_type;  // function
+};
+
+//
+// value_builder.c
+//
+struct haste_value_builder {
+	struct intern_pool *pool;
+	size_t len, cap;
+	struct haste_value *items;
+};
+
+struct haste_value_builder value_builder(struct intern_pool *pool);
+void free_value_builder(struct haste_value_builder *builder);
+void value_builder_push(struct haste_value_builder *builder, struct haste_value value);
+void value_builder_set(struct haste_value_builder *builder, size_t index, struct haste_value value);
+struct haste_value build_value(struct haste_value_builder *builder, struct haste_type type);
 
 extern struct haste_type ty_zero;
 extern struct haste_type ty_unknown;
@@ -610,8 +654,7 @@ struct haste_type_info {
 			struct haste_struct_field {
 				const char *name;
 				struct haste_type  type;
-				struct haste_value default_value;
-				bool has_default;
+				struct haste_value default_value; // VAL_NONE, if it has no default
 			} *items;
 		} structure;
 	};
@@ -622,6 +665,17 @@ struct haste_type into_type(struct haste_value value);
 
 /** @brief converts a type into value. it must not fail */
 struct haste_value into_value(struct haste_type type);
+
+struct haste_type_builder type_builder(
+	struct intern_pool *pool,
+	enum haste_compound_kind kind);
+void free_type_builder(struct haste_type_builder *builder);
+struct haste_value add_field(
+	struct haste_type_builder *builder,
+	struct string name,                 // { .chars = NULL } for unnamed (tuple)
+	struct haste_type type,
+	struct haste_value default_value);
+struct haste_type build_type(struct haste_type_builder *builder);
 
 bool type_is_builtin(struct haste_type ty);
 
@@ -708,13 +762,13 @@ enum haste_ast_node_kind {
 
 	/* Statements */
 	ND_VAR_DECL,
+	ND_BLOCK,
 
 	/* Functions */
 	ND_FUNC_DECL,
 	ND_FUNC_PARAM,
 	ND_FUNC_CALL,
 	ND_FUNC_CALL_ARG,
-	ND_BLOCK,
 	ND_RETURN,
 };
 
@@ -839,6 +893,12 @@ struct haste_ast_var_decl { // ND_VAR_DECL
 	struct haste_ast_node *value;
 };
 
+struct haste_ast_block { // ND_BLOCK
+	struct haste_ast_node base;
+	struct haste_ast_node *stmts;
+	bool returning : 1;
+};
+
 struct haste_ast_func_param { // ND_FUNC_PARAM
 	struct haste_ast_node base;
 	size_t name_count;
@@ -850,11 +910,14 @@ struct haste_ast_func_param { // ND_FUNC_PARAM
 
 struct haste_ast_func_decl { // ND_FUNC_DECL
 	struct haste_ast_node base;
+	bool is_constant : 1;
+	bool is_explicitly_comptime : 1;
+	bool is_global : 1;
 	struct string name;
 	struct location name_loc;
-	struct haste_ast_func_param *params;
 	struct haste_ast_node *return_type;
 	struct haste_ast_node *body;
+	struct haste_ast_func_param *params;
 };
 
 struct haste_ast_func_call_arg { // ND_FUNC_CALL_ARG
@@ -867,12 +930,6 @@ struct haste_ast_func_call { // ND_FUNC_CALL
 	struct haste_ast_node base;
 	struct haste_ast_node *callee;
 	struct haste_ast_func_call_arg *args;
-};
-
-struct haste_ast_block { // ND_BLOCK
-	struct haste_ast_node base;
-	struct haste_ast_node *stmts;
-	bool returning : 1;
 };
 
 struct haste_ast_return { // ND_RETURN
