@@ -217,13 +217,8 @@ static void scan_identifiers(struct token_stream *self)
 		{"var",    TK_KW_VAR},
 		{"struct", TK_KW_STRUCT},
 		{"distinct", TK_KW_DISTINCT},
-		{"func", TK_KW_FUNC},
 		{"do", TK_KW_DO},
 		{"end", TK_KW_END},
-		{"return", TK_KW_RETURN},
-		{"if", TK_KW_IF},
-		{"then", TK_KW_THEN},
-		{"else", TK_KW_ELSE},
 		{0}
 	};
 

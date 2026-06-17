@@ -14,10 +14,10 @@
 //  2: declared (value is ready)
 
 enum symbol_level {
-    SYM_AHH       = -1,
-    SYM_UNDEFINED = 0,
-    SYM_DEFINED   = 1,
-    SYM_DECLARED  = 2,
+    UNDEFINED_LOCAL = -1,
+    SYM_UNDEFINED   = 0,
+    SYM_DEFINED     = 1,
+    SYM_DECLARED    = 2,
 };
 
 struct symbol {
@@ -179,14 +179,13 @@ static struct symbol *symbol_find(struct analyzer *self, const char *name)
     return NULL;
 }
 
-#define fail_symbol(sym, node) \
-    do { \
-        (sym)->value = VAL_BAD; \
-        (sym)->type = into_type(VAL_BAD); \
-        (sym)->node = (node); \
-        (sym)->level = SYM_DECLARED; \
-        return VAL_BAD; \
-    } while (0)
+static void mark_failed(struct symbol *sym, struct haste_ast_node *n)
+{
+    sym->value = VAL_BAD;
+    sym->type = into_type(VAL_BAD);
+    sym->node = n;
+    sym->level = SYM_DECLARED;
+}
 
 // ── Binary operations ──────────────────────────────────────────────
 
@@ -349,8 +348,9 @@ static struct haste_value analyze_access(
 static struct haste_value analyze_integer_lit(
     struct analyzer *self,
     struct haste_ast_integer_lit *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     if (node->value == 0) {
         node->base.type = ty_zero;
         inject(self->pool, node, VAL_ZERO);
@@ -365,8 +365,9 @@ static struct haste_value analyze_integer_lit(
 static struct haste_value analyze_float_lit(
     struct analyzer *self,
     struct haste_ast_float_lit *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     node->base.type = ty_untyped_float;
     struct haste_value result = VAL_SCALAR(ty_untyped_float.value.type, .floating = node->value);
     inject(self->pool, node, result);
@@ -376,8 +377,9 @@ static struct haste_value analyze_float_lit(
 static struct haste_value analyze_string_lit(
     struct analyzer *self,
     struct haste_ast_string_lit *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     node->base.type = ty_untyped_string;
     struct haste_object *obj = create_string(self->pool->arena, node->value.chars, node->value.len);
     struct haste_value result = VAL_OBJ(ty_untyped_string.value.type, obj);
@@ -390,14 +392,15 @@ static struct haste_value analyze_string_lit(
 static struct haste_value analyze_ident(
     struct analyzer *self,
     struct haste_ast_ident *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     const char *name = node->value.chars;
     struct symbol *sym = symbol_find(self, name);
     if (sym == NULL) {
         return bail(self, &node->base, "Undefined symbol '{s}'", name);
     }
-    if (sym->level == SYM_AHH) {
+    if (sym->level == UNDEFINED_LOCAL) {
         report_error(self, &node->base,
             "Symbol '{s}' used before declaration", name);
         report_note(self, sym->node, "Declared here");
@@ -430,8 +433,9 @@ static struct haste_value analyze_ident(
 static struct haste_value analyze_int_bits(
     struct analyzer *self,
     struct haste_ast_int_bits *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     if (node->bits == 0 or node->bits > 128) {
         return bail(self, &node->base, "Invalid int bit width: {u32}", node->bits);
     }
@@ -443,8 +447,9 @@ static struct haste_value analyze_int_bits(
 static struct haste_value analyze_uint_bits(
     struct analyzer *self,
     struct haste_ast_uint_bits *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     if (node->bits == 0 or node->bits > 128) {
         return bail(self, &node->base, "Invalid uint bit width: {u32}", node->bits);
     }
@@ -459,8 +464,9 @@ static struct haste_value analyze_uint_bits(
     static struct haste_value analyze_##name( \
         struct analyzer *self, \
         struct haste_ast_node *node, \
-        struct haste_type expected_type) \
+        struct haste_type et) \
     { \
+        (void)et; \
         struct haste_value result = VAL_TYPE(type_val.value.type); \
         inject(self->pool, node, result); \
         return result; \
@@ -483,10 +489,13 @@ static struct haste_value analyze_grouping(
     struct haste_ast_grouping *node,
     struct haste_type expected_type)
 {
-    struct haste_value value = analyze_node(self, node->child, expected_type);
-    if (IS_BAD(value)) return VAL_BAD;
-    node->base.type = typeof_value(value);
-    return value;
+    try (value, analyze_node(self, node->child, expected_type))
+    {
+        node->base.type = typeof_value(value);
+        inject(self->pool, node, value);
+        return value;
+    }
+    return VAL_NONE;
 }
 
 // ── Distinct ───────────────────────────────────────────────────────
@@ -494,8 +503,9 @@ static struct haste_value analyze_grouping(
 static struct haste_value analyze_distinct(
     struct analyzer *self,
     struct haste_ast_distinct *node,
-    struct haste_type expected_type)
+    struct haste_type et)
 {
+    (void)et;
     try (type_val, analyze_node_type(self, node->child))
     {
         struct haste_type tp = into_type(type_val);
@@ -551,6 +561,7 @@ static struct haste_value analyze_var_decl(
     struct haste_ast_var_decl *node,
     struct haste_type expected_type)
 {
+    (void)expected_type;
     const char *name = node->name.chars;
     struct symbol *sym = symbol_find(self, name);
     assert(sym != NULL);
@@ -566,11 +577,12 @@ static struct haste_value analyze_var_decl(
     struct haste_type declared_type = ty_auto;
     if (node->type != NULL) {
         struct haste_value tp = analyze_node(self, node->type, (struct haste_type){0});
-        if (IS_BAD(tp)) fail_symbol(sym, &node->base);
+        if (IS_BAD(tp)) { mark_failed(sym, &node->base); return VAL_BAD; }
         if (not IS_TYPE(tp)) {
             report_error(self, node->type,
                 "Expected a type, got {value}", typeof_value(tp));
-            fail_symbol(sym, &node->base);
+            mark_failed(sym, &node->base);
+            return VAL_BAD;
         }
         declared_type = into_type(tp);
     }
@@ -579,7 +591,8 @@ static struct haste_value analyze_var_decl(
     if (node->value != NULL) {
         init_value = analyze_node(self, node->value, declared_type);
         if (IS_BAD(init_value)) {
-            fail_symbol(sym, &node->base);
+            mark_failed(sym, &node->base);
+            return VAL_BAD;
         }
     }
 
@@ -595,11 +608,11 @@ static struct haste_value analyze_var_decl(
         if (IS_BAD(init_value)) {
             report_error(self, node->name_loc,
                 "Cannot assign {value} to {value}", orig, declared_type);
-            fail_symbol(sym, &node->base);
+            mark_failed(sym, &node->base);
+            return VAL_BAD;
         }
     }
 
-    // If binding a type value, name the type
     if (IS_TYPE(init_value) and node->name.chars != NULL) {
         struct haste_type_info *ti = AS_TYPE_INFO(into_type(init_value));
         if (not type_is_builtin(into_type(init_value)) or ti->name == NULL) {
@@ -631,6 +644,7 @@ static struct haste_value analyze_struct_type(
     struct haste_ast_struct_type *node,
     struct haste_type expected_type)
 {
+    (void)expected_type;
     struct haste_type_builder builder = type_builder(self->pool, HASTE_TYB_STRUCT);
     bool had_err = false;
 
@@ -661,19 +675,29 @@ static struct haste_value analyze_struct_type(
 
         for (size_t i = 0; i < field->name_count; i++) {
             struct haste_value r = add_field(&builder, field->names[i], field_type, default_val);
-            if (IS_BAD(r)) {
-                switch (r.error_code) {
-                case ERR_FIELD_DUPLICATION:
-                    report_error(self, &field->base,
-                        "Duplicate field '{string}'", field->names[i]);
-                    break;
-                default: unreachable();
-                }
+			if (IS_BAD(r)) {
+				switch (r.error_code) {
+				case ERR_FIELD_DUPLICATION:
+					report_error(self, &field->base,
+						"Duplicate field '{string}'", field->names[i]);
+					break;
+				case ERR_NOT_TYPE:
+					report_error(self, &field->base,
+						"Cannot infer type for field '{string}' without a default value",
+						field->names[i]);
+					break;
+				case ERR_INVALID_ASSIGNMET:
+					report_error(self, &field->base,
+						"Default value type mismatch for field '{string}'",
+						field->names[i]);
+					break;
+				default: unreachable();
+				}
                 had_err = true;
                 goto next_field;
             }
         }
-        next_field:;
+        next_field:
     }
 
     if (had_err) return VAL_BAD;
@@ -722,12 +746,14 @@ static struct haste_value analyze_struct_literal(
     struct haste_ast_struct_literal *node,
     struct haste_type expected_type)
 {
+    (void)expected_type;
     if (node->type_expr == NULL) {
         return analyze_auto_struct_literal(self, node, expected_type);
     }
 
-    try_type(tp, node->type_expr);
-    struct haste_type struct_type = _ty_tp;
+    struct haste_value tp = analyze_node_type(self, node->type_expr);
+    if (IS_BAD(tp)) return VAL_BAD;
+    struct haste_type struct_type = into_type(tp);
 
     if (IS_AUTO(struct_type)) {
         return analyze_auto_struct_literal(self, node, expected_type);
@@ -895,7 +921,7 @@ static Error prepare_scope(struct analyzer *self, struct haste_ast_node *nodes, 
             continue;
         }
         local_put(self, name,
-            .level = top_level ? SYM_UNDEFINED : SYM_AHH,
+            .level = top_level ? SYM_UNDEFINED : UNDEFINED_LOCAL,
             .node = node);
     }
     return result;

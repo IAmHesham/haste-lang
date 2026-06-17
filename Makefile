@@ -8,13 +8,17 @@ else ifeq ($(UNAME_S),FreeBSD)
 else ifneq (,$(filter MSYS_NT% MINGW64_NT% MINGW32_NT% CYGWIN_NT%,$(UNAME_S)))
   include config/windows.mk
 else
-  # Fallback: try linux.mk (covers Darwin, etc.)
   include config/linux.mk
 endif
 
 BUILD_DIR := .build/
 SRC_DIR   := source/
-SRCS      := $(wildcard $(SRC_DIR)*.c)
+
+ALL_DIRS  := $(SRC_DIR) $(shell find $(SRC_DIR) -mindepth 1 -type d | sort)
+CFLAGS    += -I$(SRC_DIR)
+VPATH     := $(ALL_DIRS)
+
+SRCS      := $(shell find $(SRC_DIR) -name '*.c')
 OBJS      := $(addprefix $(BUILD_DIR),$(notdir $(SRCS:.c=.o)))
 INCLUDES  := $(wildcard include/*.h)
 
@@ -36,14 +40,13 @@ $(EXE): $(OBJS)
 	@echo "$(CC) -o $@ $^ (link flags...)"
 	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(OBJS): $(SRC_DIR)haste.h
-$(BUILD_DIR)%.o: $(SRC_DIR)%.c | $(BUILD_DIR)
+HEADERS := $(shell find $(SRC_DIR) -name '*.h') $(INCLUDES)
+$(OBJS): $(HEADERS)
+$(BUILD_DIR)%.o: %.c | $(BUILD_DIR)
 	@echo "$(CC) -o $@ $<"
 	@$(CC) $(CFLAGS) -c -o $@ $<
 
 -include $(OBJS:.o=.d)
-
-$(SRC_DIR)haste.h: $(INCLUDES)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

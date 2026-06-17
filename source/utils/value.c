@@ -1,6 +1,5 @@
 #include "haste.h"
 #include "my_allocator.h"
-#include "my_c_allocator.h"
 #include "my_common.h"
 #include "my_stream.h"
 #include <assert.h>

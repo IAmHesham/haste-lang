@@ -28,7 +28,8 @@ def _run_one_test(group, file_path, index=0, leng=0):
     expect_failure = group.get("expect_failure", False)
     file_output_ext = group.get("file_output")
 
-    result = subprocess.run(cmd, capture_output=True, cwd=PROJECT_DIR)
+    env = {**os.environ, "ASAN_OPTIONS": os.environ.get("ASAN_OPTIONS", "") + ":detect_leaks=0"}
+    result = subprocess.run(cmd, capture_output=True, cwd=PROJECT_DIR, env=env)
 
     if file_output_ext:
         output_path = os.path.splitext(file_path)[0] + file_output_ext

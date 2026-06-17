@@ -1,10 +1,10 @@
 func main() do
-	const x = 67;
+	const x = 67
 	if x == 67 then
-		@println("⁶🤷⁷");
+		@println("⁶🤷⁷")
 	else if x == 89 then
-		@println("⁸🤷⁹");
+		@println("⁸🤷⁹")
 	else
-		@println("???");
+		@println("???")
 	end
 end

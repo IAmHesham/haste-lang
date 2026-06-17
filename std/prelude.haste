@@ -1,5 +1,4 @@
 // this file is loaded automatically
-
 const string = struct {
 	ptr: cstr;
 	len: usize;

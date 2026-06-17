@@ -239,29 +239,6 @@ static const char *codegen_lvalue(struct codegen_context *ctx, const struct hast
 	}
 }
 
-static const char *codegen_func_call(struct codegen_context *ctx, const struct haste_ast_func_call *node)
-{
-	const char *fn_name = "";
-	if (node->callee->kind == ND_IDENT) {
-		fn_name = ((const struct haste_ast_ident*)node->callee)->value.chars;
-	}
-
-	char *args_buf = calloc(4096, 1);
-	stream_t str = smemopen(args_buf, 4096);
-	
-	size_t i = 0;
-	for (const struct haste_ast_func_call_arg *a = node->args; a; a = a->next) {
-		if (i > 0) sprint(str, ", ");
-		sprint(str, "{s}", codegen_expr(ctx, a->value));
-		i++;
-	}
-
-    const char *res = tsprint("{s}({s})", fn_name, args_buf);
-    sclose(str);
-    free(args_buf);
-	return res;
-}
-
 static const char *codegen_block(struct codegen_context *ctx, const struct haste_ast_block *node)
 {
 	const char *ret_type = c_type(ctx, node->base.type);
@@ -286,17 +263,6 @@ static const char *codegen_block(struct codegen_context *ctx, const struct haste
 	sprintln(ctx->current_block_stream, "}");
 	
 	return tmp;
-}
-
-static const char *codegen_return(struct codegen_context *ctx, const struct haste_ast_return *node)
-{
-	if (node->value != NULL) {
-		const char *val = codegen_expr(ctx, node->value);
-		sprintln(ctx->current_block_stream, "return {s};", val);
-	} else {
-		sprintln(ctx->current_block_stream, "return;");
-	}
-	return "";
 }
 
 static const char *codegen_struct_lit(struct codegen_context *ctx, const struct haste_ast_struct_literal *node)
@@ -325,9 +291,7 @@ static const char *codegen_expr(struct codegen_context *ctx, const struct haste_
 	case ND_BINARY:         return codegen_binary   (ctx, (void*)node);
 	case ND_UNARY:          return codegen_unary    (ctx, (void*)node);
 	case ND_ACCESS:         return codegen_access   (ctx, (void*)node);
-	case ND_FUNC_CALL:      return codegen_func_call(ctx, (void*)node);
 	case ND_BLOCK:          return codegen_block    (ctx, (void*)node);
-	case ND_RETURN:         return codegen_return   (ctx, (void*)node);
 	case ND_STRUCT_LITERAL: return codegen_struct_lit(ctx, (void*)node);
 	case ND_INTEGER_LIT: {
 		const struct haste_ast_integer_lit *lit = (const void*)node;
@@ -357,11 +321,10 @@ static const char *codegen_stmt(struct codegen_context *ctx, const struct haste_
 	codegen_location(ctx->current_block_stream, node->location);
 
 	switch (node->kind) {
-	case ND_FUNC_DECL: unimplemented();
 	case ND_VAR_DECL:  return codegen_var(ctx, (void*)node, false);
 	default: {
 		const char *val = codegen_expr(ctx, node);
-		if (node->kind != ND_RETURN && node->kind != ND_BLOCK) {
+		if (node->kind != ND_BLOCK) {
 			sprintln(ctx->current_block_stream, "{s};", val);
 		}
 		return val;
@@ -395,70 +358,11 @@ static const char *codegen_var(struct codegen_context *ctx, const struct haste_a
 	return name;
 }
 
-static const char *codegen_func_decl(struct codegen_context *ctx, const struct haste_ast_func_decl *node)
-{
-	const char *return_type = c_type(ctx, node->base.type);
-	const char *name = node->name.chars;
-
-	char *params_buf = NULL;
-	stream_t p_str = sdynmemopen(ctx->allocator, &params_buf);
-
-	size_t param_count = 0;
-	leach (struct haste_ast_func_param, p, node->params) {
-		struct haste_type param_type = {0};
-		if (p->type != NULL and p->type->kind == ND_VALUE) {
-			struct haste_ast_value *val_node = (struct haste_ast_value*)p->type;
-			param_type = into_type(VAL_TYPE(val_node->value.type));
-		} else if (p->type != NULL) {
-			param_type = p->type->type;
-		}
-		const char *c_param_type = c_type(ctx, param_type);
-		for (size_t i = 0; i < p->name_count; i++) {
-			if (param_count > 0) sprint(p_str, ", ");
-			sprint(p_str, "{s} {s}", c_param_type, p->names[i].chars);
-			param_count++;
-		}
-	}
-
-	char *sig = tsprint("{s} {s}({s})", return_type, name, param_count == 0 ? "void" : params_buf);
-    sclose(p_str);
-    // free(params_buf);
-
-	codegen_location(ctx->decls_stream, node->base.location);
-	sprintln(ctx->decls_stream, "{s};", sig);
-
-	// Generate body
-	if (node->body != NULL) {
-		codegen_location(ctx->impls_stream, node->base.location);
-		sprintln(ctx->impls_stream, "{s}\n{", sig);
-
-		char *body_buf = NULL;
-		stream_t prev = ctx->current_block_stream;
-		ctx->current_block_stream = sdynmemopen(ctx->allocator, &body_buf);
-
-		const char *body_val = codegen_expr(ctx, node->body);
-		
-		if (body_val != NULL) {
-			sprintln(ctx->current_block_stream, "return {s};", body_val);
-		}
-
-		sprintln(ctx->impls_stream, "{s}}", body_buf);
-
-		sclose(ctx->current_block_stream);
-		ctx->current_block_stream = prev;
-	}
-
-	return name;
-}
-
 static Error codegen_global_node(struct codegen_context *ctx, const struct haste_ast_node *node)
 {
 	switch (node->kind) {
 	case ND_VAR_DECL:
 		codegen_var(ctx, (void*)node, true);
-		break;
-	case ND_FUNC_DECL:
-		codegen_func_decl(ctx, (void*)node);
 		break;
 	default: unreachable();
 	}

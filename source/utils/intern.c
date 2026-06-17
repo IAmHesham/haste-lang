@@ -358,12 +358,7 @@ static size_t node_size(struct haste_ast_node *node)
 	case ND_STRUCT_LITERAL:   return sizeof(struct haste_ast_struct_literal);
 	case ND_STRUCT_LIT_FIELD: return sizeof(struct haste_ast_struct_lit_field);
 	case ND_VAR_DECL:         return sizeof(struct haste_ast_var_decl);
-	case ND_FUNC_DECL:        return sizeof(struct haste_ast_func_decl);
-	case ND_FUNC_PARAM:       return sizeof(struct haste_ast_func_param);
-	case ND_FUNC_CALL:        return sizeof(struct haste_ast_func_call);
-	case ND_FUNC_CALL_ARG:    return sizeof(struct haste_ast_func_call_arg);
 	case ND_BLOCK:            return sizeof(struct haste_ast_block);
-	case ND_RETURN:           return sizeof(struct haste_ast_return);
 	/* default:                  return sizeof(struct haste_ast_node); */
 	case ND_STRING:
 	case ND_CSTR:

@@ -98,11 +98,19 @@ struct haste_value add_field(
 	}
 
 	if (type_equal(type, ty_auto)) {
+		if (IS_NONE(default_value)) {
+			return VAL_BAD_ERROR(ERR_NOT_TYPE);
+		}
 		type = typeof_value(default_value);
 	}
 
 	type = untyped_to_typed(type);
-	default_value = value_coerce(builder->pool, type, default_value);
+	if (not IS_NONE(default_value)) {
+		default_value = value_coerce(builder->pool, type, default_value);
+		if (IS_BAD(default_value)) {
+			return VAL_BAD_ERROR(ERR_INVALID_ASSIGNMET);
+		}
+	}
 
 	arrpush(builder->pool->allocator, *builder, (struct haste_struct_field){
 			.name = name.chars,
