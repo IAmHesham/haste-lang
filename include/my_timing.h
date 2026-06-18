@@ -92,7 +92,7 @@ static inline struct timed_result format_duration(double ns)
 	return (struct timed_result){ ns / 1e9, TU_S };
 }
 
-static inline void print_timing_report(struct timer_list timers)
+static inline void print_timing_report(FILE *f, struct timer_list timers)
 {
 	double totals_ns[timers.len];
 	double grand_total_ns = 0;
@@ -110,8 +110,8 @@ static inline void print_timing_report(struct timer_list timers)
 
 	struct timed_result gt = format_duration(grand_total_ns);
 
-	fprintf(stderr, "\n  timing report\n");
-	fprintf(stderr, "  ─────────────\n");
+	fprintf(f, "\n  timing report\n");
+	fprintf(f, "  ─────────────\n");
 
 	for (size_t i = 0; i < timers.len; i++) {
 		struct timed_result r = format_duration(totals_ns[i]);
@@ -132,14 +132,14 @@ static inline void print_timing_report(struct timer_list timers)
 		if (used >= 1024) { used /= 1024; used_unit = "MB"; }
 		if (used >= 1024) { used /= 1024; used_unit = "GB"; }
 
-		fprintf(stderr, "  %-*s took %7.2f %-2s (%6.2f%%) used (%.2f %s) total (%.2f %s)\n",
+		fprintf(f, "  %-*s took %7.2f %-2s (%6.2f%%) used (%.2f %s) total (%.2f %s)\n",
 				name_width, timers.items[i].name, r.value, time_unit_str(r.unit), pct,
 				used, used_unit,
 				total, total_unit);
 	}
 
-	fprintf(stderr, "  ─────────────\n");
-	fprintf(stderr, "  %-*s took %.2f %s (100.00%%)\n",
+	fprintf(f, "  ─────────────\n");
+	fprintf(f, "  %-*s took %.2f %s (100.00%%)\n",
 		name_width, "total", gt.value, time_unit_str(gt.unit));
 }
 

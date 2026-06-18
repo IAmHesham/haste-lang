@@ -27,6 +27,7 @@
 #include "parser/parse.h"
 #include "analysis/analysis.h"
 #include "codegen/codegen.h"
+#include "compiler/compiler.h"
 
 #define as_string(...) \
 	_Generic((__VA_ARGS__), \

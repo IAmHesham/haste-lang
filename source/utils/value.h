@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "location.h"
+#include "lexer/token.h"
 #include "my_allocator.h"
 #include "my_stream.h"
 
@@ -135,10 +136,11 @@ struct haste_value value_assign(
 	struct haste_value *lvalue,
 	struct haste_value rvalue);
 
-struct haste_value value_add(const struct haste_value lhs, const struct haste_value rhs);
-struct haste_value value_sub(const struct haste_value lhs, const struct haste_value rhs);
-struct haste_value value_mul(const struct haste_value lhs, const struct haste_value rhs);
-struct haste_value value_div(const struct haste_value lhs, const struct haste_value rhs);
+struct haste_value value_add(struct intern_pool *pool, enum token_kind op_kind, struct location op_loc, const struct haste_value lhs, const struct haste_value rhs);
+struct haste_value value_sub(struct intern_pool *pool, enum token_kind op_kind, struct location op_loc, const struct haste_value lhs, const struct haste_value rhs);
+struct haste_value value_mul(struct intern_pool *pool, enum token_kind op_kind, struct location op_loc, const struct haste_value lhs, const struct haste_value rhs);
+struct haste_value value_div(struct intern_pool *pool, enum token_kind op_kind, struct location op_loc, const struct haste_value lhs, const struct haste_value rhs);
+struct haste_value value_unary(struct intern_pool *pool, enum token_kind op, struct location op_loc, const struct haste_value value);
 
 bool is_comptime_known(const struct haste_value v);
 

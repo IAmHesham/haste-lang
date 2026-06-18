@@ -136,6 +136,7 @@ struct haste_type build_type(struct haste_type_builder *builder)
 	}
 
 	struct haste_type_info *result = intern_type_info(builder->pool, &type_info);
+	free_type_builder(builder);
 	return into_type(VAL_TYPE(result));
 }
 

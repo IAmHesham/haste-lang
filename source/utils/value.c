@@ -1,3 +1,4 @@
+#include "utils/value.h"
 #include "haste.h"
 #include "my_allocator.h"
 #include "my_common.h"
@@ -231,12 +232,39 @@ static struct haste_value arith_int(enum arith_op op, struct haste_value lhs, st
 }
 
 static struct haste_value value_do_arith(
+	struct intern_pool *pool,
+	enum token_kind op_kind,
+	struct location op_loc,
 	const enum arith_op op,
 	struct haste_value lhs,
 	struct haste_value rhs)
 {
 	if (IS_ZERO(lhs)) lhs = VAL_SCALAR(AS_TYPE_INFO(ty_untyped_int), .integer = 0);
 	if (IS_ZERO(rhs)) rhs = VAL_SCALAR(AS_TYPE_INFO(ty_untyped_int), .integer = 0);
+
+	if (IS_RUNTIME(lhs) or IS_RUNTIME(rhs)) {
+		struct haste_ast_node *lhs_node = IS_RUNTIME(lhs) ? lhs.runtime : node_into_value(pool, NULL, lhs);
+		struct haste_ast_node *rhs_node = IS_RUNTIME(rhs) ? rhs.runtime : node_into_value(pool, NULL, rhs);
+
+		struct haste_type lt = typeof_value(lhs);
+		struct haste_type rt = typeof_value(rhs);
+		struct haste_type result_type = type_is_untyped(lt) ? rt : lt;
+
+		struct haste_ast_binary *bin = alloc(pool->arena, sizeof(struct haste_ast_binary));
+		*bin = (struct haste_ast_binary){
+			.base.kind = ND_BINARY,
+			.base.type = result_type,
+			.base.analyzed = true,
+			.base.location = op_loc,
+			.lhs = lhs_node,
+			.rhs = rhs_node,
+			.op = op_kind,
+			.op_loc = op_loc,
+		};
+		struct haste_value result = VAL_RUNTIME((struct haste_ast_node*)bin);
+		result.type_info = AS_TYPE_INFO(result_type);
+		return result;
+	}
 
 	if (not (value_is_any_int(lhs) or value_is_any_float(lhs))
 	    or not (value_is_any_int(rhs) or value_is_any_float(rhs)))
@@ -254,13 +282,63 @@ static struct haste_value value_do_arith(
 }
 
 #define DEFINE_ARITH(name, op) \
-	struct haste_value name(const struct haste_value lhs, const struct haste_value rhs) \
-	{ return value_do_arith(op, lhs, rhs); }
+	struct haste_value name(struct intern_pool *pool, enum token_kind op_kind, struct location op_loc, const struct haste_value lhs, const struct haste_value rhs) \
+	{ return value_do_arith(pool, op_kind, op_loc, op, lhs, rhs); }
 
 DEFINE_ARITH(value_add, ARITH_ADD)
 DEFINE_ARITH(value_sub, ARITH_SUB)
 DEFINE_ARITH(value_mul, ARITH_MUL)
 DEFINE_ARITH(value_div, ARITH_DIV)
+
+struct haste_value value_unary(
+    struct intern_pool *pool,
+    enum token_kind op,
+    struct location op_loc,
+    const struct haste_value value)
+{
+    if (IS_RUNTIME(value)) {
+        if (op == TK_MINUS or op == TK_PLUS) {
+            struct haste_ast_unary *un = alloc(pool->arena, sizeof(struct haste_ast_unary));
+            *un = (struct haste_ast_unary){
+                .base.kind = ND_UNARY,
+                .base.type = typeof_value(value),
+                .base.analyzed = true,
+                .base.location = op_loc,
+                .rhs = value.runtime,
+                .op = op,
+                .op_loc = op_loc,
+            };
+            struct haste_value result = VAL_RUNTIME((struct haste_ast_node*)un);
+            result.type_info = AS_TYPE_INFO(typeof_value(value));
+            return result;
+        }
+        return VAL_BAD_ERROR(ERR_INCOMPATIBLE_ARITH_TYPES);
+    }
+
+    if (not (IS_ZERO(value) or IS_SCALAR(value)))
+        return VAL_BAD_ERROR(ERR_INCOMPATIBLE_ARITH_TYPES);
+
+    switch (op) {
+    case TK_PLUS:
+        return value;
+    case TK_MINUS:
+        if (IS_ZERO(value))
+            return VAL_ZERO;
+        if (type_is_integer(typeof_value(value))) {
+            struct haste_value result = VAL_SCALAR(value.type_info, .integer = -value.integer);
+            result.is_explicitly_comptime = value.is_explicitly_comptime;
+            return result;
+        }
+        if (type_is_float(typeof_value(value))) {
+            struct haste_value result = VAL_SCALAR(value.type_info, .floating = -value.floating);
+            result.is_explicitly_comptime = value.is_explicitly_comptime;
+            return result;
+        }
+        return VAL_BAD_ERROR(ERR_INCOMPATIBLE_ARITH_TYPES);
+    default:
+        return VAL_BAD_ERROR(ERR_INCOMPATIBLE_ARITH_TYPES);
+    }
+}
 
 struct haste_value value_implicit_cast(struct intern_pool *pool, const struct haste_type to, const struct haste_value value)
 {
@@ -547,6 +625,7 @@ struct haste_value build_value(struct haste_value_builder *builder, struct haste
 			}
 		}
 
+		free_value_builder(builder);
 		return VAL_OBJ(ti, so);
 	}
 	unreachable();
@@ -633,7 +712,9 @@ struct haste_value value_access(
 	const struct string str)
 {
 	struct haste_type type = typeof_value(value);
-	if (not IS_STRUCT_TYPE(type)) return VAL_BAD_ERROR(ERR_NOT_A_STRUCT);
+	if (not IS_STRUCT_TYPE(type) and not IS_AUTO_STRUCT_TYPE(type)) {
+		return VAL_BAD_ERROR(ERR_NOT_A_STRUCT);
+	}
 	struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(type);
 
 	if (IS_RUNTIME(value)) {

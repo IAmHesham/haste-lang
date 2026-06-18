@@ -1,7 +1,9 @@
 #include "haste.h"
+#include "lexer/token.h"
 #include "my_allocator.h"
 #include "my_array.h"
 #include "my_stream.h"
+#include "utils/source.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -16,6 +18,15 @@ struct parser {
 static const char *intern_token_ident(struct parser *self, struct token tok)
 {
 	return intern_str(self->pool, tok.ident, tok.len);
+}
+
+static const char *intern_token(struct parser *self, struct token tok)
+{
+	if (tok.kind == TK_IDENT) {
+		return intern_token_ident(self, tok);
+	}
+	const char *content = get_source_file_content(tok.src);
+	return intern_str(self->pool, content + tok.start, tok.len);
 }
 
 enum precedence {
@@ -192,7 +203,7 @@ struct haste_ast_node *binary(struct parser *self, struct haste_ast_node *lhs)
 {
 	struct location start = lhs->location;
 	struct token token = peek(self);
-	if (not _match(self, TK_IDENT)) {
+	if (not match(self, TK_IDENT, TK_INT)) {
 		report_error(self, "Expected a name. got '{token}' instead.", token);
 	}
 
@@ -202,7 +213,7 @@ struct haste_ast_node *binary(struct parser *self, struct haste_ast_node *lhs)
 		.base.kind = ND_ACCESS,
 		.base.location = location_conjoin(start, end),
 		.lhs = lhs,
-		.field = string(.chars = intern_token_ident(self, token), .len = token.len),
+		.field = as_string(intern_token(self, token)),
 		.field_loc = as_location(token));
 }
 
@@ -657,6 +668,7 @@ Error parse(struct intern_pool *pool, const source_file_id src)
 		.pool = pool,
 		.stream = token_stream(src),
 	};
+	parser.stream.arena = pool->arena;
 
 	struct haste_ast_node head = {0};
 	struct haste_ast_node *current = &head;

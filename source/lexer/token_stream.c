@@ -6,9 +6,9 @@
 
 static bool is_digit(uint32_t c) { return c >= '0' and c <= '9'; }
 
-static const char *decode_string(const char *start, size_t len)
+static const char *decode_string(struct Allocator arena, const char *start, size_t len)
 {
-	char *chars = make(len + 1);
+	char *chars = alloc(arena, len + 1);
 	size_t j = 0;
 	for (size_t i = 0; i < len; i += 1) {
 		if (start[i] == '\\' and i + 1 < len) {
@@ -71,7 +71,7 @@ static void populate_token_value(struct token_stream *self, struct token *tok)
 		tok->ident = source + tok->start;
 		break;
 	case TK_STR: {
-		tok->str = decode_string(source + tok->start + 1, tok->len - 2);
+		tok->str = decode_string(self->arena, source + tok->start + 1, tok->len - 2);
 	} break;
 	default:
 		break;
@@ -349,6 +349,7 @@ struct token_stream token_stream(source_file_id src)
 		.content = source,
 		.end = get_source_file_end(src),
 		.src = src,
+		.arena = get_default_allocator(),
 	};
 }
 

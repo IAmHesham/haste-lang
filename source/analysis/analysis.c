@@ -198,7 +198,7 @@ static struct haste_value resolve_binary(
 {
 #define BIN_CASE(kind, fn, msg) \
     case kind: { \
-        struct haste_value r = fn(lhs, rhs); \
+        struct haste_value r = fn(self->pool, op, op_loc, lhs, rhs); \
         if (IS_BAD(r)) { \
             switch (r.error_code) { \
             case ERR_INCOMPATIBLE_ARITH_TYPES: \
@@ -239,22 +239,6 @@ static struct haste_value analyze_binary(
     try (lhs, analyze_node(self, node->lhs, expected_type))
     try (rhs, analyze_node(self, node->rhs, expected_type))
     {
-        if (not is_comptime_known(lhs) or not is_comptime_known(rhs)) {
-            struct haste_type lt = typeof_value(lhs);
-            struct haste_type rt = typeof_value(rhs);
-            if (not (type_is_number(lt) or type_is_untyped_number(lt))
-                or not (type_is_number(rt) or type_is_untyped_number(rt)))
-            {
-                return bail(self, node->op_loc,
-                    "Cannot apply binary op to {value} and {value}", lt, rt);
-            }
-            struct haste_type result_type = type_is_untyped(lt) ? rt : lt;
-            node->base.type = result_type;
-            struct haste_value result = VAL_RUNTIME((struct haste_ast_node*)node);
-            result.type_info = AS_TYPE_INFO(result_type);
-            return result;
-        }
-
         try (result, resolve_binary(self, lhs, rhs, node->op, node->op_loc))
         {
             inject(self->pool, node, result);
@@ -273,43 +257,13 @@ static struct haste_value analyze_unary(
 {
     try (value, analyze_node(self, node->rhs, expected_type))
     {
-        if (not is_comptime_known(value)) {
-            if (node->op == TK_MINUS or node->op == TK_PLUS) {
-                node->base.type = typeof_value(value);
-                struct haste_value result = VAL_RUNTIME((struct haste_ast_node*)node);
-                result.type_info = node->base.type.value.type;
-                return result;
-            }
+        struct haste_value result = value_unary(self->pool, node->op, node->op_loc, value);
+        if (IS_BAD(result)) {
             return bail(self, node->op_loc,
-                "Unary op not supported on runtime value");
+                "Cannot apply unary op to {value}", typeof_value(value));
         }
-
-        switch (node->op) {
-        case TK_MINUS: {
-            if (IS_ZERO(value)) {
-                value = VAL_SCALAR(AS_TYPE_INFO(typeof_value(value)), .integer = 0);
-            } else if (IS_SCALAR(value)) {
-                if (type_is_integer(typeof_value(value))) {
-                    value.integer = -value.integer;
-                } else if (type_is_float(typeof_value(value))) {
-                    value.floating = -value.floating;
-                } else {
-                    return bail(self, node->op_loc,
-                        "Cannot negate {value}", typeof_value(value));
-                }
-            } else {
-                return bail(self, node->op_loc,
-                    "Cannot negate {value}", typeof_value(value));
-            }
-        } break;
-        case TK_PLUS:
-            break;
-        default:
-            unreachable();
-        }
-
-        inject(self->pool, node, value);
-        return value;
+        inject(self->pool, node, result);
+        return result;
     }
     return VAL_NONE;
 }
@@ -718,25 +672,39 @@ static struct haste_value analyze_auto_struct_literal(
     struct haste_type_builder tb = type_builder(self->pool, HASTE_TYB_STRUCT);
     tb.is_auto = true;
     struct haste_value_builder vb = value_builder(self->pool);
+    struct haste_value result = VAL_NONE;
 
+    size_t field_idx = 0;
     leach (struct haste_ast_struct_lit_field, lit, node->fields) {
-        if (lit->name.chars == NULL) {
-            return bail(self, lit->value,
-                "Auto struct literals must use named fields");
-        }
         struct haste_value fv = analyze_node(self, lit->value, expected_type);
-        if (IS_BAD(fv)) return VAL_BAD;
+        if (IS_BAD(fv)) {
+            result = VAL_BAD;
+            goto cleanup_auto;
+        }
+
+        const char *name = lit->name.chars;
+        if (name == NULL) {
+            char buf[32];
+            int n = snprintf(buf, sizeof(buf), "%zu", field_idx);
+            name = intern_str(self->pool, buf, (size_t)n);
+        }
 
         arrpush(tb.pool->allocator, tb, (struct haste_struct_field){
-            .name = lit->name.chars,
+            .name = name,
             .type = typeof_value(fv),
             .default_value = VAL_NONE,
-        });
+		});
         value_builder_push(&vb, fv);
+        field_idx++;
     }
 
     struct haste_type t = build_type(&tb);
-    struct haste_value result = build_value(&vb, t);
+    result = build_value(&vb, t);
+    goto done_auto;
+
+cleanup_auto:
+    free_value_builder(&vb);
+done_auto:
     inject(self->pool, node, result);
     return result;
 }
@@ -766,35 +734,47 @@ static struct haste_value analyze_struct_literal(
 
     struct haste_struct_type_info *st = AS_STRUCT_TYPE_INFO(struct_type);
     struct haste_value_builder builder = value_builder(self->pool);
+    struct haste_value result = VAL_NONE;
 
     leach (struct haste_ast_struct_lit_field, lit, node->fields) {
         if (lit->name.chars == NULL) {
-            return bail(self, lit->value,
+            result = bail(self, lit->value,
                 "Positional fields not allowed for typed struct literals");
+            goto cleanup_struct;
         }
 
         ptrdiff_t idx = find_named_field(struct_type, lit->name.chars);
         if (idx < 0) {
             report_error(self, lit->name_loc,
                 "Field '{s}' does not exist in struct", lit->name.chars);
-            return VAL_BAD;
+            result = VAL_BAD;
+            goto cleanup_struct;
         }
 
         struct haste_value fv = analyze_node(self, lit->value, st->items[idx].type);
-        if (IS_BAD(fv)) return VAL_BAD;
+        if (IS_BAD(fv)) {
+            result = VAL_BAD;
+            goto cleanup_struct;
+        }
 
         struct haste_value cv = value_coerce(self->pool, st->items[idx].type, fv);
         if (IS_BAD(cv)) {
             report_error(self, lit->value,
                 "Cannot assign {value} to field '{s}' of type {value}",
                 typeof_value(fv), lit->name.chars, st->items[idx].type);
-            return VAL_BAD;
+            result = VAL_BAD;
+            goto cleanup_struct;
         }
 
         value_builder_set(&builder, (size_t)idx, cv);
     }
 
-    struct haste_value result = build_value(&builder, struct_type);
+    result = build_value(&builder, struct_type);
+    goto done_struct;
+
+cleanup_struct:
+    free_value_builder(&builder);
+done_struct:
     node->base.type = typeof_value(result);
     inject(self->pool, node, result);
     return result;
@@ -938,7 +918,10 @@ Error analyze(struct intern_pool *pool, source_file_id src)
     with_scope(&a) {
         struct haste_ast_node *nodes = get_source_file_ast(src);
         Error err = prepare_scope(&a, nodes, true);
-        if (err) return ERROR;
+        if (err) {
+            a.had_error = true;
+            continue;
+        }
 
         leach (struct haste_ast_node, node, nodes) {
             analyze_node(&a, node, (struct haste_type){0});

@@ -18,7 +18,6 @@ static int print_usage(stream_t f, const char *prog)
 	amount += sprintln(f, "  -o <file>     Write dump output to <file>");
 	amount += sprintln(f, "  --measure     Show timing report for each compiler phase");
 	amount += sprintln(f, "  --no-fun      Enable it if you hate fun");
-	amount += sprintln(f, "  --only-parse  to only parse the file and do syntactic analysis");
 	amount += sprintln(f, "  --help        Show this help message and exit");
 	return amount;
 }
@@ -38,7 +37,7 @@ Error parse_arguments(const int argc, const char *argv[argc])
 		} else if (strcmp(argv[i], "--sema") == 0) {
 			g_options.dump_sema = true;
 		} else if (strcmp(argv[i], "--c") == 0) {
-			g_options.dump_llvm = true;
+			g_options.dump_c = true;
 		} else if (strcmp(argv[i], "--measure") == 0) {
 			g_options.do_measure = true;
 		} else if (strcmp(argv[i], "--dump") == 0) {
@@ -52,8 +51,6 @@ Error parse_arguments(const int argc, const char *argv[argc])
 			g_options.output_path = argv[i];
 		} else if (strcmp(argv[i], "--no-fun") == 0) {
 			g_options.disable_fun = true;
-		} else if (strcmp(argv[i], "--only-parse") == 0) {
-			g_options.only_parse = true;
 		} else if (strcmp(argv[i], "--help") == 0) {
 			print_usage(sout, argv[0]);
 			exit(0);

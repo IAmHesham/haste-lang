@@ -6,6 +6,28 @@
 #include <assert.h>
 #include <signal.h>
 
+static int cg_file_write(void *data, const unsigned char *in, size_t count)
+{
+	return (int)fwrite(in, 1, count, (FILE*)data);
+}
+
+static int cg_file_flush(void *data)
+{
+	return fflush((FILE*)data);
+}
+
+static int cg_file_close(void *data) { (void)data; return 0; }
+static int cg_file_read(void *data, unsigned char *out, size_t amount) { (void)data; (void)out; (void)amount; return 0; }
+static int cg_file_seek(void *data, long offset, int whence) { (void)data; (void)offset; (void)whence; return 0; }
+
+static const stream_interface_t cg_file_vtable = {
+	.close = cg_file_close,
+	.read  = cg_file_read,
+	.write = cg_file_write,
+	.seek  = cg_file_seek,
+	.flush = cg_file_flush,
+};
+
 struct type_map_entry {
 	struct haste_type_info *haste_type;
 	const char *c_name;
@@ -377,7 +399,8 @@ Error codegen(
 	struct Allocator allocator,
 	const source_file_id src,
 	const char *output_path,
-	bool dump_to_stderr)
+	bool dump_to_stderr,
+	FILE *output_file)
 {
 	struct codegen_context ctx = {0};
 	ctx.allocator = allocator;
@@ -399,6 +422,8 @@ Error codegen(
 	stream_t out = {0};
 	if (output_path) {
 		out = sopen(output_path, "w");
+	} else if (output_file) {
+		out = (stream_t){ .data = output_file, .vtable = &cg_file_vtable };
 	} else if (dump_to_stderr) {
 		out = serr;
 	} else {

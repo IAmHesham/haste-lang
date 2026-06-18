@@ -8,6 +8,7 @@ Error codegen(
     struct Allocator allocator,
     const source_file_id src,
     const char *output_path,
-    bool dump_to_stderr);
+    bool dump_to_stderr,
+    FILE *output_file);
 
 #endif

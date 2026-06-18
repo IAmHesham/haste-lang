@@ -2,6 +2,7 @@
 #define TOKEN_STREAM_H_
 
 #include "token.h"
+#include "my_allocator.h"
 
 #define STREAM_DATA_COUNT 512
 
@@ -11,6 +12,7 @@ struct token_stream {
 
 	source_file_id src;
 	const char *content, *end;
+	struct Allocator arena;
 	uint32_t start, current;
 	bool has_error : 1;
 	bool ended : 1;

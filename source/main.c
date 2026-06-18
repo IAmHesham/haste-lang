@@ -18,30 +18,6 @@
 #include "my_timing.h"
 #include "cwalk.h"
 
-static stream_t open_dump_stream(const char *ext, char *path_buf, size_t path_buf_size)
-{
-	if (g_options.do_dump)
-		return serr;
-
-	const char *path = g_options.output_path;
-	if (!path) {
-		cwk_path_change_extension(g_options.source_path, ext, path_buf, path_buf_size);
-		path = path_buf;
-	}
-
-	stream_t out = sopen(path, "w");
-	if (!out.data) {
-		fprintf(stderr, "error: failed to open '%s' for writing\n", path);
-		return out;
-	}
-	return out;
-}
-
-static void close_dump_stream(const struct options *opts, stream_t out)
-{
-	if (!opts->do_dump)
-		sclose(out);
-}
 
 static void print_errno(void)
 {
@@ -97,17 +73,15 @@ static int custom_format_ast(stream_t stream, struct modifier_stream mod, va_lis
 
 int main(int argc, char *argv[argc])
 {
-	int exit_code = 0;
 	setup_io_stream();
-
-	Error err = parse_arguments(argc, (const char **)argv);
-	if (err) return 1;
 
 	define_format_specifier("string", custom_format_string);
 	define_format_specifier("token", custom_format_token);
 	define_format_specifier("value", custom_format_value);
 	define_format_specifier("obj", custom_format_object);
 	define_format_specifier("ast", custom_format_ast);
+
+	if (parse_arguments(argc, (const char **)argv)) return 1;
 
 	srand((unsigned int)time(NULL));
 #ifdef _WIN32
@@ -119,104 +93,146 @@ int main(int argc, char *argv[argc])
 	struct Allocator c_allocator = get_c_allocator();
 	set_default_allocator(c_allocator);
 
-	sources.allocator = c_allocator;
+	struct haste_compiler compiler = {0};
+	compiler.allocator = c_allocator;
 
-	struct Arena arena = ArenaDefault();
-	struct Allocator arena_allocator = arena_get_allocator(&arena);
+	haste_compiler_set_fun(&compiler, !g_options.disable_fun);
 
-	struct intern_pool intern_table = init_intern_pool(c_allocator, arena_allocator);
-	setup_builtins(&intern_table);
-
-	struct timer_list timers = {
-		.allocator = get_default_allocator(),
-	};
-
-	const source_file_id src = obtain_source_file_id(NULL, g_options.source_path);
-
-	if (g_options.dump_tokens) {
-		char path_buf[4096];
-		stream_t out = open_dump_stream(".tokens", path_buf, sizeof(path_buf));
-		struct token_stream tokens = token_stream(src);
-		while (not token_stream_ended(&tokens)) {
-			sprintln(out, "{token:#}", token_stream_advance(&tokens));
-		}
-		close_dump_stream(&g_options, out);
-		goto cleanup;
+	if (haste_compiler_add_source(&compiler, g_options.source_path)) {
+		return 1;
 	}
 
-	timer_start(&timers, "parser");
-	err = parse(&intern_table, src);
-	timer_stop(&timers, allocated);
-
-	if (err) { exit_code = 1; goto cleanup; }
-	if (g_options.only_parse) {
-		exit_code = 0;
-		goto cleanup;
+	if (g_options.dump_tokens) {
+		const char *ext = ".tokens";
+		FILE *f = NULL;
+		if (g_options.do_dump) {
+			f = stderr;
+		} else if (g_options.output_path) {
+			f = fopen(g_options.output_path, "w");
+		} else {
+			char buf[4096];
+			cwk_path_change_extension(g_options.source_path, ext, buf, sizeof(buf));
+			f = fopen(buf, "w");
+		}
+		if (f) {
+			haste_compiler_dump_tokens(&compiler, f);
+			if (!g_options.do_dump) fclose(f);
+		}
+		if (g_options.do_measure) {
+			haste_compiler_dump_measure(&compiler, stdout);
+		}
+		haste_compiler_deinit(&compiler);
+		return 0;
 	}
 
 	if (g_options.dump_ast) {
-		char path_buf[4096];
-		stream_t out = open_dump_stream(".json", path_buf, sizeof(path_buf));
-		if (!out.data) { exit_code = 1; goto cleanup; }
-		sprintln(out, "{ast}", get_source_file_ast(src));
-		close_dump_stream(&g_options, out);
-		goto cleanup;
+		const char *ext = ".ast.json";
+		FILE *f = NULL;
+		if (g_options.do_dump) {
+			f = stderr;
+		} else if (g_options.output_path) {
+			f = fopen(g_options.output_path, "w");
+		} else {
+			char buf[4096];
+			cwk_path_change_extension(g_options.source_path, ext, buf, sizeof(buf));
+			f = fopen(buf, "w");
+		}
+		if (f && haste_compiler_dump_ast(&compiler, f)) {
+			if (!g_options.do_dump) fclose(f);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
+		if (!g_options.do_dump && f) fclose(f);
+		if (g_options.do_measure) {
+			haste_compiler_dump_measure(&compiler, stdout);
+		}
+		haste_compiler_deinit(&compiler);
+		return 0;
 	}
-
-	timer_start(&timers, "analysis");
-	err = analyze(&intern_table, src);
-	timer_stop(&timers, allocated);
-	if (err) { exit_code = 1; goto cleanup; }
 
 	if (g_options.dump_sema) {
-		char path_buf[4096];
-		stream_t out = open_dump_stream(".json", path_buf, sizeof(path_buf));
-		if (!out.data) { exit_code = 1; goto cleanup; }
-		sprintln(out, "{ast}", get_source_file_ast(src));
-		close_dump_stream(&g_options, out);
-		goto cleanup;
-	}
-
-	if (g_options.dump_llvm) {
-		const char *llvm_path = NULL;
-		bool llvm_to_stderr = false;
-		char llvm_path_buf[4096];
+		const char *ext = ".sema.json";
+		FILE *f = NULL;
 		if (g_options.do_dump) {
-			llvm_to_stderr = true;
+			f = stderr;
+		} else if (g_options.output_path) {
+			f = fopen(g_options.output_path, "w");
 		} else {
-			llvm_path = g_options.output_path;
-			if (!llvm_path) {
-				cwk_path_change_extension(g_options.source_path, ".c", llvm_path_buf, sizeof(llvm_path_buf));
-				llvm_path = llvm_path_buf;
-			}
+			char buf[4096];
+			cwk_path_change_extension(g_options.source_path, ext, buf, sizeof(buf));
+			f = fopen(buf, "w");
 		}
-		timer_start(&timers, "codegen");
-		err = codegen(c_allocator, src, llvm_path, llvm_to_stderr);
-		timer_stop(&timers, allocated);
-		if (err) { exit_code = 1; goto cleanup; }
-		goto cleanup;
+		if (f && haste_compiler_dump_sema(&compiler, f)) {
+			if (!g_options.do_dump) fclose(f);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
+		if (!g_options.do_dump && f) fclose(f);
+		if (g_options.do_measure) {
+			haste_compiler_dump_measure(&compiler, stdout);
+		}
+		haste_compiler_deinit(&compiler);
+		return 0;
 	}
 
-	timer_start(&timers, "codegen");
-	err = codegen(c_allocator, src,  NULL, false);
-	timer_stop(&timers, allocated);
-	if (err) { exit_code = 1; goto cleanup; }
-
-	// Cleanup source files
-	for (size_t i = 0; i < sources.len; i++) {
-		struct source_file item = sources.items[i];
-		xdestroy(sources.allocator, strlen(item.path), item.path);
-		xdestroy(sources.allocator, strlen(item.content), item.content);
+	if (g_options.dump_c) {
+		const char *ext = ".c";
+		FILE *f = NULL;
+		if (g_options.do_dump) {
+			f = stderr;
+		} else if (g_options.output_path) {
+			f = fopen(g_options.output_path, "w");
+		} else {
+			char buf[4096];
+			cwk_path_change_extension(g_options.source_path, ext, buf, sizeof(buf));
+			f = fopen(buf, "w");
+		}
+		if (f && haste_compiler_dump_c(&compiler, f)) {
+			if (!g_options.do_dump) fclose(f);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
+		if (!g_options.do_dump && f) fclose(f);
+		if (g_options.do_measure) {
+			haste_compiler_dump_measure(&compiler, stdout);
+		}
+		haste_compiler_deinit(&compiler);
+		return 0;
 	}
-	marrfree(sources);
 
-cleanup:
-	if (g_options.do_measure and exit_code == 0) {
-		print_timing_report(timers);
+	// Normal compilation
+	{
+		Error err;
+
+		timer_start(&compiler.timers, "parsing");
+		err = parse(&compiler.pool, compiler.src);
+		timer_stop(&compiler.timers, 0);
+		if (err) {
+			if (g_options.do_measure) haste_compiler_dump_measure(&compiler, stdout);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
+
+		timer_start(&compiler.timers, "analysis");
+		err = analyze(&compiler.pool, compiler.src);
+		timer_stop(&compiler.timers, 0);
+		if (err) {
+			if (g_options.do_measure) haste_compiler_dump_measure(&compiler, stdout);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
+
+		timer_start(&compiler.timers, "codegen");
+		err = codegen(compiler.allocator, compiler.src, NULL, false, NULL);
+		timer_stop(&compiler.timers, 0);
+		if (err) {
+			if (g_options.do_measure) haste_compiler_dump_measure(&compiler, stdout);
+			haste_compiler_deinit(&compiler);
+			return 1;
+		}
 	}
-	marrfree(timers);
 
-	deinit_intern_pool(&intern_table);
-	arena_free(&arena);
-	return exit_code;
+	if (g_options.do_measure) haste_compiler_dump_measure(&compiler, stdout);
+	haste_compiler_deinit(&compiler);
+	return 0;
 }
