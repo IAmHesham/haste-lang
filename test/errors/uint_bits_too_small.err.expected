@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/uint_bits_too_small.haste:1:10: Error: Invalid uint bit width: 0
-    1 | const a: uint0 = 0;
-                 ^ 

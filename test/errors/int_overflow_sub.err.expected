@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/int_overflow_sub.haste:1:32: Error: Subtraction caused arithmetic overflow
-    1 | const x = -9223372036854775807 - 2;
-                                       ^ 

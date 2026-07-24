@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/type_mismatch_struct_field_types.haste:3:7: Error: Cannot assign S1 to S2
-    3 | const v: S2 = S1{ a: 1, b: 2 };
-              ^ 

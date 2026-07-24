@@ -1,4 +1,0 @@
-const MyInt = distinct int;
-const x: MyInt = 5;
-const y: int = 10;
-const z = x + y;

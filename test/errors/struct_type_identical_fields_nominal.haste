@@ -1,3 +1,0 @@
-const S1 = struct { x: int; y: int; };
-const S2 = struct { x: int; y: int; };
-const a: S1 = S2{ x: 1, y: 2 };

@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/distinct_mismatch.haste:3:7: Error: Cannot assign int to ID
-    3 | const y: ID = x;
-              ^ 

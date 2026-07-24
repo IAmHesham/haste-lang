@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/member_access_nonexistent_field.haste:3:11: Error: Field 'z' not found in Vec2
-    3 | const a = v.z;
-                  ^ 

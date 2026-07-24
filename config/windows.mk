@@ -13,7 +13,7 @@ ifneq (,$(findstring cl,$(notdir $(CC))))
 else
   # MinGW GCC
   STD := $(shell echo 'int main(){}' | $(CC) -std=c23 -x c - -o nul 2>/dev/null && echo c23 || echo c17)
-  CFLAGS   := -std=$(STD) -Iinclude/
+  CFLAGS   := -std=$(STD)
   LDFLAGS  := -lstdc++
   DEBUG_FLAGS    := -g -Og -DDEBUG -Wall -Wextra -Wpedantic -Werror -Wno-unused-function
   RELEASE_FLAGS  := -O3

@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/invalid_character.haste:1:11: Error: invalid character: '@'
-    1 | const a = @;
-                  ^ 

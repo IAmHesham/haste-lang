@@ -15,36 +15,34 @@ BUILD_DIR := .build/
 SRC_DIR   := source/
 
 ALL_DIRS  := $(SRC_DIR) $(shell find $(SRC_DIR) -mindepth 1 -type d | sort)
-CFLAGS    += -I$(SRC_DIR)
 VPATH     := $(ALL_DIRS)
 
-SRCS      := $(shell find $(SRC_DIR) -name '*.c')
-OBJS      := $(addprefix $(BUILD_DIR),$(notdir $(SRCS:.c=.o)))
-INCLUDES  := $(wildcard include/*.h)
+SRCS      := $(shell find $(SRC_DIR) -name '*.cpp')
+OBJS      := $(addprefix $(BUILD_DIR),$(notdir $(SRCS:.cpp=.o)))
 
 .PHONY: all gen_compile_flags run clean debug release test test-clean
 
 all: debug
 
-debug: CFLAGS += $(DEBUG_FLAGS)
-debug: CFLAGS += -MMD -MP
+debug: CXXFLAGS += $(DEBUG_FLAGS)
+debug: CXXFLAGS += -MMD -MP
 debug: gen_compile_flags $(EXE)
 
 gen_compile_flags:
-	@echo -xc $(CFLAGS) $(LDFLAGS) | tr ' ' '\n' > compile_flags.txt
+	@echo $(CXXFLAGS) $(LDFLAGS) | tr ' ' '\n' > compile_flags.txt
 
-release: CFLAGS += $(RELEASE_FLAGS)
+release: CXXFLAGS += $(RELEASE_FLAGS)
 release: $(EXE)
 
 $(EXE): $(OBJS)
-	@echo "$(CC) -o $@ $^ (link flags...)"
-	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "$(CXX) -o $@ $^ (link flags...)"
+	@$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
-HEADERS := $(shell find $(SRC_DIR) -name '*.h') $(INCLUDES)
+HEADERS := $(shell find $(SRC_DIR) -name '*.hpp') $(shell find include/ -name '*.hpp')
 $(OBJS): $(HEADERS)
-$(BUILD_DIR)%.o: %.c | $(BUILD_DIR)
-	@echo "$(CC) -o $@ $<"
-	@$(CC) $(CFLAGS) -c -o $@ $<
+$(BUILD_DIR)%.o: %.cpp | $(BUILD_DIR)
+	@echo "$(CXX) -o $@ $<"
+	@$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 -include $(OBJS:.o=.d)
 

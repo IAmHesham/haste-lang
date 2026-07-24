@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/struct_type_default_mismatch.haste:3:7: Error: Cannot assign S2 to S1
-    3 | const a: S1 = S2{x: 3};
-              ^ 

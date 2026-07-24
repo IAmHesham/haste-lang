@@ -1,12 +1,16 @@
 # Linux configuration — auto-detect compiler
-CC  := $(or $(shell command -v clang 2>/dev/null),$(shell command -v gcc 2>/dev/null),$(shell command -v cc 2>/dev/null),clang)
 CXX := $(or $(shell command -v clang++ 2>/dev/null),$(shell command -v g++ 2>/dev/null),$(shell command -v c++ 2>/dev/null),clang++)
+CC  := $(CXX)
 
-STD := $(shell echo 'int main(){}' | $(CC) -std=c23 -x c - -o /dev/null 2>/dev/null && echo c23 || echo c17)
-CFLAGS   := -std=$(STD) -Iinclude/
-LDFLAGS  := # -lstdc++
+# Detect NixOS glibc-dev path (needed for iostreams/<format> with clang on NixOS)
+# GLIBC_DEV := $(shell find /nix/store -maxdepth 1 -name '*-glibc-*-dev' -type d 2>/dev/null | head -1)
+ifneq ($(GLIBC_DEV),)
+  CXXFLAGS  := -std=c++20 -Iinclude/ -Isource/ # -idirafter $(GLIBC_DEV)/include
+else
+  CXXFLAGS  := -std=c++20 -Iinclude/ -Isource/
+endif
+LDFLAGS   :=
 
-DEBUG_FLAGS    := -g -fsanitize=undefined,address -Og -DDEBUG -Wall -Wextra -Wpedantic -Werror -Wno-unused-function
-# DEBUG_FLAGS    := -g -Og -DDEBUG -Wall -Wextra -Wpedantic -Werror -Wno-unused-function
+DEBUG_FLAGS    := -ggdb -fsanitize=undefined,address -Og -DDEBUG -Wall -Wextra -Wpedantic -Werror -Wno-unused-function
 RELEASE_FLAGS  := -O3
-EXE      := haste
+EXE            := haste

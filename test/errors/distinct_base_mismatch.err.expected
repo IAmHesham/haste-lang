@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/distinct_base_mismatch.haste:4:13: Error: Addition not possible between MyInt and int
-    4 | const z = x + y;
-                    ^ 

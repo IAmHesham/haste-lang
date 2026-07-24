@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/struct_extra_field.haste:2:29: Error: Field 'z' does not exist in struct
-    2 | const v = Vec2{ x: 1, y: 2, z: 3 };
-                                    ^ 

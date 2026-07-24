@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/distinct_add_mismatch.haste:5:23: Error: Addition not possible between Apple and Orange
-    5 | const fruit_salad = a + o;
-                              ^ 

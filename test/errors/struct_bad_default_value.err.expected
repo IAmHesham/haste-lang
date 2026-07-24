@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/struct_bad_default_value.haste:2:5: Error: Default value type mismatch for field 'x'
-    2 | x: int = "hello";
-        ^ 

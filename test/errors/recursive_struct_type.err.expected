@@ -1,6 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/recursive_struct_type.haste:1:1: Error: Recursive declaration is not allowed
-    1 | const S = struct { x: S; };
-        ^ 
-home/hesham/Documents/Projects/haste-lang/test/errors/recursive_struct_type.haste:1:23: Error: Expected a type, got BAD
-    1 | const S = struct { x: S; };
-                              ^ 

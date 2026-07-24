@@ -1,3 +1,0 @@
-const A = struct { x: int; };
-const B = struct { x: int; };
-const a: A = cast B{ x: 1 };

@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/member_access_on_untyped.haste:1:11: Error: Field 'foo' not found in untyped_int
-    1 | const a = (1).foo;
-                  ^ 

@@ -1,3 +1,0 @@
-home/hesham/Documents/Projects/haste-lang/test/errors/unterminated_string.haste:1:11: Error: unterminated string literal
-    1 | const a = "hello;
-                  ^ 

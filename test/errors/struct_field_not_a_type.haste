@@ -1,3 +1,0 @@
-const S = struct {
-    x: 42;
-};
